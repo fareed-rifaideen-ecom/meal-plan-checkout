@@ -435,7 +435,7 @@ function mpc_render_checkout_wizard() {
         </div>
 
         <div class="mpc-summary-area">
-            <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
+            <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Meal Plan Summary</h3>
             <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
             <div id="mpc-summary-logistics" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.9em;">
                 <strong>Method:</strong> <span id="sum-method"></span><br>
