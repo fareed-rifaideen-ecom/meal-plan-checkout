@@ -558,8 +558,8 @@ function mpc_render_checkout_wizard() {
 
             for (let i = 0; i < options.length; i++) {
                 const optValue = options[i].value;
-                // Identify slots starting with 5, 6, or 7 AM
-                const isEarlySlot = /^(5|6|7):/.test(optValue);
+                // Identify slots starting with 5, 6, or 7 AM ONLY
+                const isEarlySlot = /^(5|6|7):00 AM/.test(optValue);
 
                 if (method === 'Pickup' && isEarlySlot) {
                     options[i].disabled = true;
