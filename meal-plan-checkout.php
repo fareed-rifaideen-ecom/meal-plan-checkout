@@ -236,9 +236,9 @@ function mpc_render_checkout_wizard() {
         <div class="mpc-wizard-area">
             <div class="mpc-progress">
                 <div class="mpc-step-indicator active" data-step="1"><div class="mpc-step-circle">1</div><span>Select Plan</span></div>
-                <div class="mpc-step-indicator" data-step="2"><div class="mpc-step-circle">2</div><span>Details</span></div>
-                <div class="mpc-step-indicator" data-step="3" id="mpc-indicator-meals"><div class="mpc-step-circle">3</div><span>Meals</span></div>
-                <div class="mpc-step-indicator" data-step="4" id="mpc-indicator-pay"><div class="mpc-step-circle">4</div><span>Payment</span></div>
+                <div class="mpc-step-indicator" data-step="2"><div class="mpc-step-circle">2</div><span>Delivery Details</span></div>
+                <div class="mpc-step-indicator" data-step="3" id="mpc-indicator-meals"><div class="mpc-step-circle">3</div><span>Meal Type</span></div>
+                <div class="mpc-step-indicator" data-step="4" id="mpc-indicator-pay"><div class="mpc-step-circle">4</div><span>Place Order</span></div>
             </div>
 
             <div id="mpc-step-1" class="mpc-step-content active">
