@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a streamlined custom checkout wizard for meal plan subscriptions.
+ * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard for meal plan subscriptions.
  * Version: 2.4
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
@@ -10,7 +10,19 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 // ==========================================
-// 1. AJAX HANDLER: ORDER PROCESSING
+// 1. ENQUEUE SCRIPTS & STYLES (NEW!)
+// ==========================================
+add_action('wp_enqueue_scripts', 'mpc_enqueue_assets');
+function mpc_enqueue_assets() {
+    // Only load the CSS if the shortcode is on the page to keep the site fast
+    global $post;
+    if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
+        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), '2.4' );
+    }
+}
+
+// ==========================================
+// 2. AJAX HANDLER: ORDER PROCESSING
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_process_order', 'mpc_process_order');
 add_action('wp_ajax_mpc_process_order', 'mpc_process_order');
@@ -63,6 +75,7 @@ function mpc_process_order() {
     update_user_meta($user_id, 'billing_phone', $phone);
     update_user_meta($user_id, 'billing_address_1', $address_1);
     update_user_meta($user_id, 'billing_address_2', $address_2);
+    // Hardcode Dubai constraint
     update_user_meta($user_id, 'billing_city', 'Dubai');
     update_user_meta($user_id, 'billing_country', 'AE');
     
@@ -79,6 +92,7 @@ function mpc_process_order() {
     $order = wc_create_order(array('customer_id' => $user_id));
     $order->add_product($product, 1);
 
+    // Hardcode Dubai constraint
     $address = array(
         'first_name' => $first_name,
         'last_name'  => $last_name,
@@ -132,12 +146,12 @@ function mpc_process_order() {
 
     $wpdb->insert($table_subs, $sub_data);
 
-    // RESTORED: Redirect to secure WooCommerce Checkout/Payment Page
+    // Redirect to secure WooCommerce Checkout/Payment Page
     wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
 }
 
 // ==========================================
-// 2. FRONTEND WIZARD RENDERER
+// 3. FRONTEND WIZARD RENDERER
 // ==========================================
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
@@ -175,63 +189,9 @@ function mpc_render_checkout_wizard() {
     }
 
     ob_start();
+    // THE CSS HAS BEEN MOVED OUT OF HERE AND ENQUEUED PROPERLY
     ?>
-    <style>
-        .mpc-checkout-container { max-width: 1200px; margin: 0 auto; font-family: inherit; display: flex; gap: 30px; padding: 20px 0; box-sizing: border-box; }
-        .mpc-wizard-area { flex: 1; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-        .mpc-summary-area { width: 350px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 20px; height: fit-content; position: sticky; top: 20px; }
-        
-        .mpc-progress { display: flex; justify-content: space-between; margin-bottom: 30px; position: relative; }
-        .mpc-progress::before { content: ''; position: absolute; top: 15px; left: 0; right: 0; height: 3px; background: #eee; z-index: 1; }
-        
-        /* Adjusted width for 3 steps */
-        .mpc-step-indicator { position: relative; z-index: 2; text-align: center; width: 33.33%; font-size: 0.85em; font-weight: bold; color: #999; }
-        .mpc-step-circle { width: 30px; height: 30px; background: #eee; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; border: 3px solid #fff; transition: all 0.3s; }
-        .mpc-step-indicator.active .mpc-step-circle { background: #379237; color: #fff; }
-        .mpc-step-indicator.active { color: #379237; }
-        .mpc-step-indicator.completed .mpc-step-circle { background: #46b450; color: #fff; }
-        
-        .mpc-step-content { display: none; animation: fadeIn 0.4s; }
-        .mpc-step-content.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        .mpc-cat-header { margin: 30px 0 15px 0; color: #379237; border-bottom: 2px solid #f1f1f1; padding-bottom: 8px; font-size: 1.3em; }
-        .mpc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 20px; }
-        .mpc-tile { border: 2px solid #ddd; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
-        .mpc-tile:hover { border-color: #379237; box-shadow: 0 4px 12px rgba(0,115,170,0.1); }
-        .mpc-tile.selected { border-color: #379237; background: #f0f8ff; }
-        .mpc-tile.selected::after { content: '✓'; position: absolute; top: 10px; right: 10px; background: #379237; color: #fff; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-        .mpc-tile-title { font-size: 1.2em; font-weight: bold; color: #333; margin-bottom: 10px; line-height: 1.4; }
-        .mpc-tile-price { font-size: 1.4em; color: #379237; font-weight: bold; margin-bottom: 15px; }
-        
-        .mpc-form-group { margin-bottom: 20px; width: 100%; box-sizing: border-box; }
-        .mpc-form-group label { display: block; font-weight: bold; margin-bottom: 8px; color: #444; }
-        .mpc-form-control { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: inherit; font-size: 1em; }
-        .mpc-form-row { display: flex; gap: 20px; width: 100%; flex-wrap: wrap; }
-        .mpc-form-col { flex: 1; min-width: 200px; box-sizing: border-box; }
-        .mpc-logistics-box { margin-top: 15px; padding: 15px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; width: 100%; box-sizing: border-box; }
-        
-        .mpc-nav-buttons { display: flex; justify-content: space-between; align-items: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
-        .mpc-btn { padding: 12px 25px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 1em; transition: opacity 0.2s; height: 48px; }
-        .mpc-btn:hover { opacity: 0.9; }
-        .mpc-btn-next { background: #379237; color: #fff; margin-left: auto; }
-        .mpc-btn-back { background: #e2e8f0; color: #334155; }
-        .mpc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        @media (max-width: 768px) {
-            .mpc-checkout-container { flex-direction: column-reverse; }
-            .mpc-summary-area { width: 100%; position: relative; top: 0; margin-bottom: 20px; }
-            .mpc-form-row { flex-direction: column; gap: 0; }
-            .mpc-step-indicator span { display: none; }
-            .mpc-grid { gap: 8px; }
-            .mpc-tile { padding: 12px 6px; }
-            .mpc-tile-title { font-size: 0.9em; margin-bottom: 5px; line-height: 1.2; }
-            .mpc-tile-price { font-size: 1em; margin-bottom: 8px; }
-            .mpc-tile.selected::after { width: 16px; height: 16px; font-size: 10px; top: 5px; right: 5px; }
-            .mpc-tile div[style*="font-size"] { font-size: 0.75em !important; line-height: 1.2; }
-        }
-    </style>
-
+    
     <div class="mpc-checkout-container">
         
         <div class="mpc-wizard-area">
@@ -724,7 +684,7 @@ function mpc_render_checkout_wizard() {
 }
 
 // ==========================================
-// 3. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
+// 4. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
 // ==========================================
 add_action( 'woocommerce_order_status_processing', 'mpc_activate_subscription_on_payment', 10, 1 );
 add_action( 'woocommerce_order_status_completed', 'mpc_activate_subscription_on_payment', 10, 1 );
@@ -746,14 +706,14 @@ function mpc_add_dashboard_button_to_thankyou( $order_id ) {
     echo '</div>';
 }
 
-// Change the "Pay for order" button text on the secure checkout page
+// CHANGE THE "PAY FOR ORDER" BUTTON TEXT ON CHECKOUT PAGE
 add_filter( 'woocommerce_pay_order_button_text', 'mpc_change_pay_button_text' );
 function mpc_change_pay_button_text( $text ) {
     return 'Place the Order';
 }
 
 // ==========================================
-// 4. CUSTOMER DASHBOARD PROFILE WIDGET
+// 5. CUSTOMER DASHBOARD PROFILE WIDGET
 // ==========================================
 add_shortcode( 'meal_plan_customer_profile', 'mpc_render_customer_profile' );
 
