@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 4-step custom checkout wizard for meal plan subscriptions.
- * Version: 2.1
+ * Version: 2.0
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -134,8 +134,7 @@ function mpc_process_order() {
 
     $wpdb->insert($table_subs, $sub_data);
 
-    // FIX: Send user directly to "Order Received" Thank You page, bypassing payment page.
-    wp_send_json_success(array('payment_url' => $order->get_checkout_order_received_url()));
+    wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
 }
 
 // ==========================================
@@ -420,18 +419,17 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)">Review & Place Order &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)">Review & Pay &rarr;</button>
                 </div>
             </div>
 
-            <!-- FIX: Modified Step 4 Content for Direct Order Placement -->
             <div id="mpc-step-4" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Finalize Your Order</h2>
-                <p style="color: #666;">Click the button below to place your order. A representative will contact you to assist with the payment process shortly.</p>
+                <h2 style="margin-top: 0; color: #222;">Review & Payment</h2>
+                <p style="color: #666;">Click the button below to instantly proceed to the secure payment portal.</p>
                 
                 <div class="mpc-nav-buttons" style="border-top: none;">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" id="mpc-submit-btn" style="background: #46b450; padding: 15px 35px; font-size: 1.1em;">Place Order &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" id="mpc-submit-btn" style="background: #46b450; padding: 15px 35px; font-size: 1.1em;">Proceed to Secure Payment &rarr;</button>
                 </div>
             </div>
         </div>
@@ -669,8 +667,7 @@ function mpc_render_checkout_wizard() {
             if (checkoutData.isJuice) { selectedCats.push('Juices'); } 
             else { document.querySelectorAll('.mpc-cat-checkbox:checked').forEach(b => selectedCats.push(b.value)); }
 
-            // FIX: Updated loading text
-            btn.innerText = 'Placing Order...';
+            btn.innerText = 'Processing Secure Hand-off...';
             btn.disabled = true;
 
             let formData = new URLSearchParams();
@@ -699,15 +696,13 @@ function mpc_render_checkout_wizard() {
                     window.location.href = response.data.payment_url;
                 } else {
                     alert('Error: ' + response.data);
-                    // FIX: Updated reset text
-                    btn.innerText = 'Place Order \u2192';
+                    btn.innerText = 'Proceed to Secure Payment \u2192';
                     btn.disabled = false;
                 }
             })
             .catch(error => {
                 alert('An unexpected error occurred. Please try again.');
-                // FIX: Updated reset text
-                btn.innerText = 'Place Order \u2192';
+                btn.innerText = 'Proceed to Secure Payment \u2192';
                 btn.disabled = false;
             });
         });
