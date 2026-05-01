@@ -346,7 +346,7 @@ function mpc_render_checkout_wizard() {
                         <label>Delivery Method *</label>
                         <select class="mpc-form-control" id="mpc_delivery_method">
                             <option value="Delivery">Home/Office Delivery</option>
-                            <option value="Pickup">Store Pickup</option>
+                            <option value="Pickup">Self Pickup</option>
                         </select>
                     </div>
                     <div class="mpc-form-col mpc-form-group">
