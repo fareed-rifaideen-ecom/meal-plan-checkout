@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 4-step custom checkout wizard for meal plan subscriptions.
- * Version: 1.8
+ * Version: 1.9
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -549,6 +549,35 @@ function mpc_render_checkout_wizard() {
             updateLogisticsSummary();
         }
 
+        // Logic for Dynamic Timing Adjustment
+        function mpcAdjustTimingOptions() {
+            const method = document.getElementById('mpc_delivery_method').value;
+            const timeSlotSelect = document.getElementById('mpc_time_slot');
+            const options = timeSlotSelect.options;
+            let currentSelectionNeedsReset = false;
+
+            for (let i = 0; i < options.length; i++) {
+                const optValue = options[i].value;
+                // Identify slots starting with 5, 6, or 7 AM
+                const isEarlySlot = /^(5|6|7):/.test(optValue);
+
+                if (method === 'Pickup' && isEarlySlot) {
+                    options[i].disabled = true;
+                    options[i].hidden = true;
+                    if (options[i].selected) currentSelectionNeedsReset = true;
+                } else {
+                    options[i].disabled = false;
+                    options[i].hidden = false;
+                }
+            }
+
+            // Force selection to 8:00 AM if they were previously on an early slot and switched to Pickup
+            if (currentSelectionNeedsReset) {
+                timeSlotSelect.value = "8:00 AM to 9:00 AM";
+                alert("Store Pickup is only available from 8:00 AM. Your time slot has been adjusted.");
+            }
+        }
+
         document.getElementById('mpc_delivery_method').addEventListener('change', function() {
             if (this.value === 'Delivery') {
                 document.getElementById('mpc_delivery_zone_container').style.display = 'block';
@@ -557,6 +586,7 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc_delivery_zone_container').style.display = 'none';
                 document.getElementById('mpc_pickup_branch_container').style.display = 'block';
             }
+            mpcAdjustTimingOptions(); // Trigger timing logic
             updateLogisticsSummary();
         });
 
@@ -677,6 +707,8 @@ function mpc_render_checkout_wizard() {
             });
         });
         
+        // Initial run to ensure timing is correct if state was loaded from localStorage
+        mpcAdjustTimingOptions();
         updateLogisticsSummary();
     </script>
     <?php
