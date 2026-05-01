@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 4-step custom checkout wizard for meal plan subscriptions.
- * Version: 1.9
+ * Version: 2.0
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
