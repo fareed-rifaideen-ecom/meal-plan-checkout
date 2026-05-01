@@ -13,23 +13,23 @@
     --mpc-radius: 12px;
 }
 
-/* Base Container - FIX: Added align-items to prevent stretching */
+/* Base Container */
 .mpc-checkout-container {
     max-width: 1200px;
     margin: 40px auto;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
-    align-items: flex-start; /* Ensures sidebar doesn't stretch vertically */
+    align-items: flex-start; 
     gap: 40px;
     padding: 0 20px;
     box-sizing: border-box;
     color: var(--mpc-text-main);
 }
 
-/* Wizard Area - FIX: Forces it to fill available space but respect the sidebar */
+/* Wizard Area */
 .mpc-wizard-area {
-    flex: 1 1 auto; /* Grow and shrink as needed */
-    min-width: 0; /* Prevents flexbox blowout on small screens */
+    flex: 1 1 auto; 
+    min-width: 0; 
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
@@ -37,16 +37,16 @@
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
 }
 
-/* Summary Area - FIX: Forces a strict width so it never gets squished */
+/* Summary Area */
 .mpc-summary-area {
-    flex: 0 0 350px; /* Do not grow, do not shrink, strictly 350px */
+    flex: 0 0 350px; 
     width: 350px;
     background: var(--mpc-bg-light);
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
     padding: 30px;
     position: sticky;
-    top: 40px; /* Sticks to top when scrolling */
+    top: 40px; 
 }
 
 /* Progress Bar */
@@ -136,7 +136,8 @@
     background: #ffffff;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    justify-content: center;
+    align-items: center;
 }
 .mpc-tile:hover {
     border-color: var(--mpc-primary);
@@ -169,12 +170,14 @@
     color: var(--mpc-text-main);
     margin-bottom: 10px;
     line-height: 1.4;
+    width: 100%;
 }
 .mpc-tile-price {
-    font-size: 1.5em;
+    font-size: 1.4em;
     color: var(--mpc-primary);
     font-weight: 800;
-    margin-bottom: 15px;
+    margin-bottom: 5px;
+    width: 100%;
 }
 
 /* Forms & Inputs */
@@ -243,90 +246,101 @@
 .mpc-btn-back:hover { background: #cbd5e1; }
 .mpc-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
+/* Adjustments for Checkboxes to keep them aligned */
+input[type="checkbox"].mpc-cat-checkbox, 
+#mpc_delivery_zone_check, 
+#mpc_use_saved_details, 
+#mpc_use_saved_details_ajax {
+    margin-top: 0;
+    vertical-align: middle;
+}
+
 
 /* ======================================================================
    MOBILE & TABLET RESPONSIVE STYLES
    ====================================================================== */
 @media (max-width: 992px) {
-    /* Stack Wizard and Summary on tablets */
     .mpc-checkout-container {
         flex-direction: column-reverse;
-        align-items: stretch; /* Allow full width stretching on smaller screens */
+        align-items: stretch;
         gap: 30px;
     }
     .mpc-summary-area {
         width: 100%;
-        flex: none; /* Remove strict flex sizing */
+        flex: none; 
         position: relative;
         top: 0;
     }
 }
 
 @media (max-width: 768px) {
-    /* Full Mobile Optimizations */
     .mpc-checkout-container {
-        padding: 0 15px;
-        margin: 20px auto;
+        padding: 0 10px;
+        margin: 15px auto;
     }
     .mpc-wizard-area {
-        padding: 25px 15px; /* Reduce padding to maximize screen space */
+        padding: 20px 15px; 
     }
     
-    /* Clean up the progress bar for small screens */
     .mpc-step-indicator span {
-        display: none; /* Hide text, keep numbers */
+        display: none; 
     }
     .mpc-progress::before {
         top: 12px;
     }
     
-    /* Force forms into single column */
     .mpc-form-row {
         flex-direction: column;
         gap: 0;
     }
     
-    /* Maintain 3 Columns for Tiles on Mobile */
+    /* FIX: Force 3 Columns on Mobile & override theme styles */
     .mpc-grid {
-        grid-template-columns: repeat(3, 1fr); 
-        gap: 10px; /* Reduced gap to fit */
+        grid-template-columns: repeat(3, 1fr) !important; 
+        gap: 8px !important; 
+        display: grid !important;
     }
     
-    /* Shrink the tile content to fit 3 columns on a small screen */
+    /* Extreme Shrink for Tiles to fit perfectly on small screens */
     .mpc-tile {
-        padding: 15px 8px; /* Less padding inside tile */
+        padding: 10px 4px !important; 
+        min-height: 90px;
     }
     .mpc-tile-title {
-        font-size: 0.85em; /* Smaller title font */
-        margin-bottom: 8px;
+        font-size: 0.75em !important; /* Forces title to shrink */
+        margin-bottom: 6px !important;
+        line-height: 1.2 !important;
+        word-wrap: break-word;
     }
     .mpc-tile-price {
-        font-size: 1.1em; /* Smaller price font */
-        margin-bottom: 5px;
+        font-size: 0.95em !important; /* Forces price to shrink */
+        margin-bottom: 0 !important;
     }
-    /* Scale down the checkmark */
+
+    /* Scale down the checkmark perfectly for the smaller mobile boxes */
     .mpc-tile.selected::after { 
-        width: 20px; 
-        height: 20px; 
-        font-size: 12px; 
-        top: -5px; 
-        right: -5px; 
+        width: 18px !important; 
+        height: 18px !important; 
+        font-size: 10px !important; 
+        top: -6px !important; 
+        right: -6px !important; 
     }
+
     /* Hide the short description on mobile so tiles don't get too tall */
     .mpc-tile div[style*="font-size: 0.9em"] {
-        display: none;
+        display: none !important;
     }
     
     /* Touch-friendly adjustments for buttons */
     .mpc-btn {
         padding: 12px 20px;
         font-size: 1em;
-        width: 100%; /* Make buttons full width on mobile */
+        width: 100%; 
         margin-bottom: 10px;
     }
     
     .mpc-nav-buttons {
-        flex-direction: column-reverse; /* Back button on bottom, Next on top */
+        flex-direction: column-reverse; 
     }
     .mpc-btn-next {
         margin-left: 0;
