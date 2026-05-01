@@ -243,7 +243,7 @@ function mpc_render_checkout_wizard() {
 
             <div id="mpc-step-1" class="mpc-step-content active">
                 <h2 style="margin-top: 0; color: #222;">Choose Your Plan</h2>
-                <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. Then go through the process of selecting delivery options followed by selecting the meal types to finalise your order. We will then be in touch for payment and to assist you with meal selection </p>
+                <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. Then go through the process of selecting delivery options followed by selecting the meal types to finalise your order. We will then be in touch for payment and to assist you with meal selection. You will choose your specific meals after your subscription is confirmed. </p>
                 
                 <?php 
                 if ( empty($products) ) {
