@@ -396,7 +396,7 @@ function mpc_render_checkout_wizard() {
             </div>
 
             <div id="mpc-step-3" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Configure Your Meals</h2>
+                <h2 style="margin-top: 0; color: #222;">Select Your Meal Type</h2>
                 <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Which meal categories would you like included in your daily plan?</p>
                 
                 <div class="mpc-form-group" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1;">
