@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a 4-step custom checkout wizard for meal plan subscriptions.
- * Version: 2.1
+ * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard for meal plan subscriptions.
+ * Version: 2.3
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -134,7 +134,8 @@ function mpc_process_order() {
 
     $wpdb->insert($table_subs, $sub_data);
 
-    wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
+    // Bypass payment screen and go directly to Thank You page
+    wp_send_json_success(array('payment_url' => $order->get_checkout_order_received_url()));
 }
 
 // ==========================================
@@ -184,7 +185,9 @@ function mpc_render_checkout_wizard() {
         
         .mpc-progress { display: flex; justify-content: space-between; margin-bottom: 30px; position: relative; }
         .mpc-progress::before { content: ''; position: absolute; top: 15px; left: 0; right: 0; height: 3px; background: #eee; z-index: 1; }
-        .mpc-step-indicator { position: relative; z-index: 2; text-align: center; width: 25%; font-size: 0.85em; font-weight: bold; color: #999; }
+        
+        /* Adjusted width for 3 steps */
+        .mpc-step-indicator { position: relative; z-index: 2; text-align: center; width: 33.33%; font-size: 0.85em; font-weight: bold; color: #999; }
         .mpc-step-circle { width: 30px; height: 30px; background: #eee; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px auto; border: 3px solid #fff; transition: all 0.3s; }
         .mpc-step-indicator.active .mpc-step-circle { background: #379237; color: #fff; }
         .mpc-step-indicator.active { color: #379237; }
@@ -238,7 +241,6 @@ function mpc_render_checkout_wizard() {
                 <div class="mpc-step-indicator active" data-step="1"><div class="mpc-step-circle">1</div><span>Select Plan</span></div>
                 <div class="mpc-step-indicator" data-step="2"><div class="mpc-step-circle">2</div><span>Delivery Details</span></div>
                 <div class="mpc-step-indicator" data-step="3" id="mpc-indicator-meals"><div class="mpc-step-circle">3</div><span>Meal Type</span></div>
-                <div class="mpc-step-indicator" data-step="4" id="mpc-indicator-pay"><div class="mpc-step-circle">4</div><span>Place Order</span></div>
             </div>
 
             <div id="mpc-step-1" class="mpc-step-content active">
@@ -349,7 +351,7 @@ function mpc_render_checkout_wizard() {
                         <label>Delivery Method *</label>
                         <select class="mpc-form-control" id="mpc_delivery_method">
                             <option value="Delivery">Home/Office Delivery</option>
-                            <option value="Pickup">Self Pickup</option>
+                            <option value="Pickup">Store Pick-up</option>
                         </select>
                     </div>
                     <div class="mpc-form-col mpc-form-group">
@@ -394,7 +396,7 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)">Next Step &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-2">Next Step &rarr;</button>
                 </div>
             </div>
 
@@ -422,17 +424,7 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)">Review & Pay &rarr;</button>
-                </div>
-            </div>
-
-            <div id="mpc-step-4" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Review & Payment</h2>
-                <p style="color: #666;">Click the button below to instantly proceed to the secure payment portal.</p>
-                
-                <div class="mpc-nav-buttons" style="border-top: none;">
-                    <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" id="mpc-submit-btn" style="background: #46b450; padding: 15px 35px; font-size: 1.1em;">Proceed to Secure Payment &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-3" style="background: #46b450;">Place Order &rarr;</button>
                 </div>
             </div>
         </div>
@@ -453,7 +445,7 @@ function mpc_render_checkout_wizard() {
 
     <script>
         let currentStep = 1;
-        let totalSteps = 4;
+        let totalSteps = 3;
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
 
         document.getElementById('mpc_toggle_password').addEventListener('click', function(e) {
@@ -538,13 +530,24 @@ function mpc_render_checkout_wizard() {
             
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
-                document.getElementById('mpc-indicator-pay').querySelector('.mpc-step-circle').innerText = '3';
                 document.getElementById('mpc-summary-meals').style.display = 'none';
-                totalSteps = 3;
+                document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '50%');
+                totalSteps = 2;
+                
+                let btn2 = document.getElementById('btn-next-2');
+                btn2.innerText = 'Place Order \u2192';
+                btn2.style.background = '#46b450';
+                btn2.style.color = '#fff';
             } else {
                 document.getElementById('mpc-indicator-meals').style.display = 'block';
-                document.getElementById('mpc-indicator-pay').querySelector('.mpc-step-circle').innerText = '4';
-                totalSteps = 4;
+                document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '33.33%');
+                totalSteps = 3;
+                
+                let btn2 = document.getElementById('btn-next-2');
+                btn2.innerText = 'Next Step \u2192';
+                btn2.style.background = '#379237';
+                btn2.style.color = '#fff';
+                
                 if (allowedMeals > 0) {
                     document.getElementById('mpc-meals-subtitle').innerText = `Your plan includes ${allowedMeals} main meals per day. Please select exactly ${allowedMeals} categories below. (Snacks are included automatically). Meal selection is available after placing your order`;
                 }
@@ -577,7 +580,6 @@ function mpc_render_checkout_wizard() {
             // Force selection to 8:00 AM if they were previously on an early slot and switched to Pickup
             if (currentSelectionNeedsReset) {
                 timeSlotSelect.value = "8:00 AM to 9:00 AM";
-                alert("Store Pickup is only available from 8:00 AM. Your time slot has been adjusted.");
             }
         }
 
@@ -634,6 +636,12 @@ function mpc_render_checkout_wizard() {
                 let method = document.getElementById('mpc_delivery_method').value;
                 if (method === 'Delivery' && !document.getElementById('mpc_delivery_zone_check').checked) { alert('Please confirm you are within the delivery zone to proceed.'); return; }
                 if (method === 'Pickup' && !document.getElementById('mpc_pickup_branch').value) { alert('Please select a pickup branch.'); return; }
+                
+                // If it's a Juice plan, Step 2 is the Final Step
+                if (checkoutData.isJuice) {
+                    mpcSubmitOrder(document.getElementById('btn-next-2'));
+                    return;
+                }
             }
 
             if (direction === 1 && currentStep === 3 && !checkoutData.isJuice) {
@@ -641,13 +649,16 @@ function mpc_render_checkout_wizard() {
                 if (checkoutData.allowedMeals > 0 && checkedCount !== checkoutData.allowedMeals) {
                     alert(`Your plan requires exactly ${checkoutData.allowedMeals} main meal categories.`); return;
                 }
+                
+                // Step 3 is the Final Step for Normal Plans
+                mpcSubmitOrder(document.getElementById('btn-next-3'));
+                return;
             }
 
             document.getElementById('mpc-step-' + currentStep).classList.remove('active');
             currentStep += direction;
-            if (checkoutData.isJuice && currentStep === 3) currentStep += direction; 
             if(currentStep < 1) currentStep = 1;
-            if(currentStep > 4) currentStep = 4;
+            if(currentStep > totalSteps) currentStep = totalSteps;
 
             document.getElementById('mpc-step-' + currentStep).classList.add('active');
 
@@ -656,21 +667,17 @@ function mpc_render_checkout_wizard() {
                 let stepNum = parseInt(indicators[i].getAttribute('data-step'));
                 indicators[i].classList.remove('active', 'completed');
                 if(stepNum === currentStep) indicators[i].classList.add('active');
-                else if(stepNum < currentStep) indicators[i].classList.add('completed');
+                else if(stepNum < currentStep && indicators[i].style.display !== 'none') indicators[i].classList.add('completed');
             }
             document.querySelector('.mpc-checkout-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        // ==========================================
-        // SUBMIT ORDER AJAX 
-        // ==========================================
-        document.getElementById('mpc-submit-btn').addEventListener('click', function() {
-            let btn = this;
+        function mpcSubmitOrder(btn) {
             let selectedCats = [];
             if (checkoutData.isJuice) { selectedCats.push('Juices'); } 
             else { document.querySelectorAll('.mpc-cat-checkbox:checked').forEach(b => selectedCats.push(b.value)); }
 
-            btn.innerText = 'Processing Secure Hand-off...';
+            btn.innerText = 'Placing Order...';
             btn.disabled = true;
 
             let formData = new URLSearchParams();
@@ -699,16 +706,16 @@ function mpc_render_checkout_wizard() {
                     window.location.href = response.data.payment_url;
                 } else {
                     alert('Error: ' + response.data);
-                    btn.innerText = 'Proceed to Secure Payment \u2192';
+                    btn.innerText = 'Place Order \u2192';
                     btn.disabled = false;
                 }
             })
             .catch(error => {
                 alert('An unexpected error occurred. Please try again.');
-                btn.innerText = 'Proceed to Secure Payment \u2192';
+                btn.innerText = 'Place Order \u2192';
                 btn.disabled = false;
             });
-        });
+        }
         
         // Initial run to ensure timing is correct if state was loaded from localStorage
         mpcAdjustTimingOptions();
