@@ -13,21 +13,23 @@
     --mpc-radius: 12px;
 }
 
-/* Base Container */
+/* Base Container - FIX: Added align-items to prevent stretching */
 .mpc-checkout-container {
     max-width: 1200px;
     margin: 40px auto;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
+    align-items: flex-start; /* Ensures sidebar doesn't stretch vertically */
     gap: 40px;
     padding: 0 20px;
     box-sizing: border-box;
     color: var(--mpc-text-main);
 }
 
-/* Wizard & Summary Areas */
+/* Wizard Area - FIX: Forces it to fill available space but respect the sidebar */
 .mpc-wizard-area {
-    flex: 1;
+    flex: 1 1 auto; /* Grow and shrink as needed */
+    min-width: 0; /* Prevents flexbox blowout on small screens */
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
@@ -35,13 +37,14 @@
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
 }
 
+/* Summary Area - FIX: Forces a strict width so it never gets squished */
 .mpc-summary-area {
+    flex: 0 0 350px; /* Do not grow, do not shrink, strictly 350px */
     width: 350px;
     background: var(--mpc-bg-light);
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
     padding: 30px;
-    height: fit-content;
     position: sticky;
     top: 40px; /* Sticks to top when scrolling */
 }
@@ -164,7 +167,7 @@
     font-size: 1.1em;
     font-weight: 700;
     color: var(--mpc-text-main);
-    margin-bottom: 15px;
+    margin-bottom: 10px;
     line-height: 1.4;
 }
 .mpc-tile-price {
@@ -248,10 +251,12 @@
     /* Stack Wizard and Summary on tablets */
     .mpc-checkout-container {
         flex-direction: column-reverse;
+        align-items: stretch; /* Allow full width stretching on smaller screens */
         gap: 30px;
     }
     .mpc-summary-area {
         width: 100%;
+        flex: none; /* Remove strict flex sizing */
         position: relative;
         top: 0;
     }
