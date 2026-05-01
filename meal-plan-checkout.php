@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 4-step custom checkout wizard for meal plan subscriptions.
- * Version: 2.1
+ * Version: 2.0
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -63,6 +63,7 @@ function mpc_process_order() {
     update_user_meta($user_id, 'billing_phone', $phone);
     update_user_meta($user_id, 'billing_address_1', $address_1);
     update_user_meta($user_id, 'billing_address_2', $address_2);
+    // Hardcode Dubai constraint
     update_user_meta($user_id, 'billing_city', 'Dubai');
     update_user_meta($user_id, 'billing_country', 'AE');
     
@@ -79,6 +80,7 @@ function mpc_process_order() {
     $order = wc_create_order(array('customer_id' => $user_id));
     $order->add_product($product, 1);
 
+    // Hardcode Dubai constraint
     $address = array(
         'first_name' => $first_name,
         'last_name'  => $last_name,
@@ -132,7 +134,7 @@ function mpc_process_order() {
 
     $wpdb->insert($table_subs, $sub_data);
 
-    wp_send_json_success(array('payment_url' => $order->get_checkout_order_received_url()));
+    wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
 }
 
 // ==========================================
@@ -241,7 +243,7 @@ function mpc_render_checkout_wizard() {
 
             <div id="mpc-step-1" class="mpc-step-content active">
                 <h2 style="margin-top: 0; color: #222;">Choose Your Plan</h2>
-                <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. Then go through the process of selecting delivery options followed by selecting the meal types to finalise your order. We will then be in touch for payment and to assist you with meal selection. You will choose your specific meals after your subscription is confirmed.</p>
+                <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. Then go through the process of selecting delivery options followed by selecting the meal types to finalise your order. We will then be in touch for payment and to assist you with meal selection. You will choose your specific meals after your subscription is confirmed. </p>
                 
                 <?php 
                 if ( empty($products) ) {
@@ -417,17 +419,17 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)">Review & Place Order &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)">Review & Pay &rarr;</button>
                 </div>
             </div>
 
             <div id="mpc-step-4" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Finalize Your Order</h2>
-                <p style="color: #666;">Click the button below to place your order. A representative will contact you to assist with the payment process shortly.</p>
+                <h2 style="margin-top: 0; color: #222;">Review & Payment</h2>
+                <p style="color: #666;">Click the button below to instantly proceed to the secure payment portal.</p>
                 
                 <div class="mpc-nav-buttons" style="border-top: none;">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" id="mpc-submit-btn" style="background: #46b450; padding: 15px 35px; font-size: 1.1em;">Place Order &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" id="mpc-submit-btn" style="background: #46b450; padding: 15px 35px; font-size: 1.1em;">Proceed to Secure Payment &rarr;</button>
                 </div>
             </div>
         </div>
@@ -556,23 +558,23 @@ function mpc_render_checkout_wizard() {
 
             for (let i = 0; i < options.length; i++) {
                 const optValue = options[i].value;
-                // STRICT AM MATCH: Hide slots starting with 5, 6, or 7 AM only.
+                // Identify slots starting with 5, 6, or 7 AM ONLY
                 const isEarlySlot = /^(5|6|7):00 AM/.test(optValue);
 
                 if (method === 'Pickup' && isEarlySlot) {
                     options[i].disabled = true;
                     options[i].hidden = true;
-                    if (options[i].selected) {
-                        currentSelectionNeedsReset = true;
-                    }
+                    if (options[i].selected) currentSelectionNeedsReset = true;
                 } else {
                     options[i].disabled = false;
                     options[i].hidden = false;
                 }
             }
 
+            // Force selection to 8:00 AM if they were previously on an early slot and switched to Pickup
             if (currentSelectionNeedsReset) {
                 timeSlotSelect.value = "8:00 AM to 9:00 AM";
+                alert("Store Pickup is only available from 8:00 AM. Your time slot has been adjusted.");
             }
         }
 
@@ -584,7 +586,7 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc_delivery_zone_container').style.display = 'none';
                 document.getElementById('mpc_pickup_branch_container').style.display = 'block';
             }
-            mpcAdjustTimingOptions(); 
+            mpcAdjustTimingOptions(); // Trigger timing logic
             updateLogisticsSummary();
         });
 
@@ -665,7 +667,7 @@ function mpc_render_checkout_wizard() {
             if (checkoutData.isJuice) { selectedCats.push('Juices'); } 
             else { document.querySelectorAll('.mpc-cat-checkbox:checked').forEach(b => selectedCats.push(b.value)); }
 
-            btn.innerText = 'Processing Order...';
+            btn.innerText = 'Processing Secure Hand-off...';
             btn.disabled = true;
 
             let formData = new URLSearchParams();
@@ -694,17 +696,18 @@ function mpc_render_checkout_wizard() {
                     window.location.href = response.data.payment_url;
                 } else {
                     alert('Error: ' + response.data);
-                    btn.innerText = 'Place Order \u2192';
+                    btn.innerText = 'Proceed to Secure Payment \u2192';
                     btn.disabled = false;
                 }
             })
             .catch(error => {
                 alert('An unexpected error occurred. Please try again.');
-                btn.innerText = 'Place Order \u2192';
+                btn.innerText = 'Proceed to Secure Payment \u2192';
                 btn.disabled = false;
             });
         });
         
+        // Initial run to ensure timing is correct if state was loaded from localStorage
         mpcAdjustTimingOptions();
         updateLogisticsSummary();
     </script>
