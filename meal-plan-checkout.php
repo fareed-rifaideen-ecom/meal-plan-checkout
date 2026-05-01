@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 4-step custom checkout wizard for meal plan subscriptions.
- * Version: 2.0
+ * Version: 2.1
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -200,7 +200,7 @@ function mpc_render_checkout_wizard() {
         .mpc-tile:hover { border-color: #379237; box-shadow: 0 4px 12px rgba(0,115,170,0.1); }
         .mpc-tile.selected { border-color: #379237; background: #f0f8ff; }
         .mpc-tile.selected::after { content: '✓'; position: absolute; top: 10px; right: 10px; background: #379237; color: #fff; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-        .mpc-tile-title { font-size: 1.2em; font-weight: bold; color: #333; margin-bottom: 10px; }
+        .mpc-tile-title { font-size: 1.2em; font-weight: bold; color: #333; margin-bottom: 10px; line-height: 1.4; }
         .mpc-tile-price { font-size: 1.4em; color: #379237; font-weight: bold; margin-bottom: 15px; }
         
         .mpc-form-group { margin-bottom: 20px; width: 100%; box-sizing: border-box; }
@@ -266,9 +266,12 @@ function mpc_render_checkout_wizard() {
                             preg_match('/(\d+)\s*Meal/i', $title, $matches);
                             $allowed_meals = isset($matches[1]) ? intval($matches[1]) : 0;
                             
+                            // FORMAT TITLE: Insert line break after " - "
+                            $display_title = str_replace(' - ', ' - <br>', esc_html($title));
+                            
                             echo '<div class="mpc-tile" onclick="mpcSelectPlan(this, \''.esc_attr($title).'\', \''.esc_attr($raw_price).'\', '.$is_juice.', '.$id.', '.$allowed_meals.')">';
                             echo '<div>';
-                            echo '<div class="mpc-tile-title">' . esc_html($title) . '</div>';
+                            echo '<div class="mpc-tile-title">' . $display_title . '</div>';
                             echo '<div class="mpc-tile-price">' . wp_kses_post($price_html) . '</div>';
                             echo '</div>';
                             if (!empty($desc)) echo '<div style="font-size: 0.9em; color: #666; margin-top: 10px;">' . wp_kses_post($desc) . '</div>';
@@ -799,3 +802,4 @@ function mpc_render_customer_profile() {
     <?php
     return ob_get_clean();
 }
+// END OF FILE
