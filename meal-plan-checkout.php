@@ -543,7 +543,7 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc-indicator-pay').querySelector('.mpc-step-circle').innerText = '4';
                 totalSteps = 4;
                 if (allowedMeals > 0) {
-                    document.getElementById('mpc-meals-subtitle').innerText = `Your plan includes ${allowedMeals} main meals per day. Please select exactly ${allowedMeals} categories below. (Snacks are included automatically).`;
+                    document.getElementById('mpc-meals-subtitle').innerText = `Your plan includes ${allowedMeals} main meals per day. Please select exactly ${allowedMeals} categories below. (Snacks are included automatically). Meal selection is available after placing your order`;
                 }
             }
             updateLogisticsSummary();
