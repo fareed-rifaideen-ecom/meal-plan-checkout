@@ -457,7 +457,7 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-3" style="background: #46b450;">Proceed to Checkout &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-3" style="background: #46b450;">Next: Place Order &rarr;</button>
                 </div>
             </div>
         </div>
