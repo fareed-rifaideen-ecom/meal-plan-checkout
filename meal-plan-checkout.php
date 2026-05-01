@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard for meal plan subscriptions.
- * Version: 2.3
+ * Description: A companion plugin that provides a streamlined custom checkout wizard for meal plan subscriptions.
+ * Version: 2.4
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -63,7 +63,6 @@ function mpc_process_order() {
     update_user_meta($user_id, 'billing_phone', $phone);
     update_user_meta($user_id, 'billing_address_1', $address_1);
     update_user_meta($user_id, 'billing_address_2', $address_2);
-    // Hardcode Dubai constraint
     update_user_meta($user_id, 'billing_city', 'Dubai');
     update_user_meta($user_id, 'billing_country', 'AE');
     
@@ -80,7 +79,6 @@ function mpc_process_order() {
     $order = wc_create_order(array('customer_id' => $user_id));
     $order->add_product($product, 1);
 
-    // Hardcode Dubai constraint
     $address = array(
         'first_name' => $first_name,
         'last_name'  => $last_name,
@@ -134,8 +132,8 @@ function mpc_process_order() {
 
     $wpdb->insert($table_subs, $sub_data);
 
-    // Bypass payment screen and go directly to Thank You page
-    wp_send_json_success(array('payment_url' => $order->get_checkout_order_received_url()));
+    // RESTORED: Redirect to secure WooCommerce Checkout/Payment Page
+    wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
 }
 
 // ==========================================
@@ -424,7 +422,7 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-back" onclick="mpcChangeStep(-1)">&larr; Back</button>
-                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-3" style="background: #46b450;">Place Order &rarr;</button>
+                    <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-3" style="background: #46b450;">Proceed to Checkout &rarr;</button>
                 </div>
             </div>
         </div>
@@ -535,7 +533,7 @@ function mpc_render_checkout_wizard() {
                 totalSteps = 2;
                 
                 let btn2 = document.getElementById('btn-next-2');
-                btn2.innerText = 'Place Order \u2192';
+                btn2.innerText = 'Proceed to Checkout \u2192';
                 btn2.style.background = '#46b450';
                 btn2.style.color = '#fff';
             } else {
@@ -677,7 +675,7 @@ function mpc_render_checkout_wizard() {
             if (checkoutData.isJuice) { selectedCats.push('Juices'); } 
             else { document.querySelectorAll('.mpc-cat-checkbox:checked').forEach(b => selectedCats.push(b.value)); }
 
-            btn.innerText = 'Placing Order...';
+            btn.innerText = 'Redirecting to Checkout...';
             btn.disabled = true;
 
             let formData = new URLSearchParams();
@@ -706,13 +704,13 @@ function mpc_render_checkout_wizard() {
                     window.location.href = response.data.payment_url;
                 } else {
                     alert('Error: ' + response.data);
-                    btn.innerText = 'Place Order \u2192';
+                    btn.innerText = 'Proceed to Checkout \u2192';
                     btn.disabled = false;
                 }
             })
             .catch(error => {
                 alert('An unexpected error occurred. Please try again.');
-                btn.innerText = 'Place Order \u2192';
+                btn.innerText = 'Proceed to Checkout \u2192';
                 btn.disabled = false;
             });
         }
@@ -746,6 +744,12 @@ function mpc_add_dashboard_button_to_thankyou( $order_id ) {
     echo '<p style="color: #475569; margin-bottom: 25px; font-size: 1.1em;">Head over to your personal dashboard to start scheduling your meals and tracking your macros.</p>';
     echo '<a href="' . esc_url($portal_url) . '" style="background: #46b450; color: #fff; padding: 15px 35px; border-radius: 4px; text-decoration: none; font-weight: bold; font-size: 1.1em; display: inline-block; transition: opacity 0.2s;">Go to My Dashboard &rarr;</a>';
     echo '</div>';
+}
+
+// Change the "Pay for order" button text on the secure checkout page
+add_filter( 'woocommerce_pay_order_button_text', 'mpc_change_pay_button_text' );
+function mpc_change_pay_button_text( $text ) {
+    return 'Place the Order';
 }
 
 // ==========================================
