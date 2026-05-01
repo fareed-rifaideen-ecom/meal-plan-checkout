@@ -1,0 +1,318 @@
+/* ======================================================================
+   MEAL PLAN CHECKOUT - CORE STYLES & DESKTOP UI
+   ====================================================================== */
+
+:root {
+    --mpc-primary: #379237;
+    --mpc-primary-hover: #2d7a2d;
+    --mpc-secondary: #46b450;
+    --mpc-bg-light: #f8fafc;
+    --mpc-border: #e2e8f0;
+    --mpc-text-main: #1e293b;
+    --mpc-text-muted: #64748b;
+    --mpc-radius: 12px;
+}
+
+/* Base Container */
+.mpc-checkout-container {
+    max-width: 1200px;
+    margin: 40px auto;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    gap: 40px;
+    padding: 0 20px;
+    box-sizing: border-box;
+    color: var(--mpc-text-main);
+}
+
+/* Wizard & Summary Areas */
+.mpc-wizard-area {
+    flex: 1;
+    background: #ffffff;
+    border: 1px solid var(--mpc-border);
+    border-radius: var(--mpc-radius);
+    padding: 40px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+.mpc-summary-area {
+    width: 350px;
+    background: var(--mpc-bg-light);
+    border: 1px solid var(--mpc-border);
+    border-radius: var(--mpc-radius);
+    padding: 30px;
+    height: fit-content;
+    position: sticky;
+    top: 40px; /* Sticks to top when scrolling */
+}
+
+/* Progress Bar */
+.mpc-progress {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    position: relative;
+}
+.mpc-progress::before {
+    content: '';
+    position: absolute;
+    top: 15px;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: #e2e8f0;
+    z-index: 1;
+}
+.mpc-step-indicator {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    width: 33.33%;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--mpc-text-muted);
+}
+.mpc-step-circle {
+    width: 32px;
+    height: 32px;
+    background: #f1f5f9;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px auto;
+    border: 4px solid #ffffff;
+    transition: all 0.3s ease;
+    color: #94a3b8;
+}
+.mpc-step-indicator.active .mpc-step-circle {
+    background: var(--mpc-primary);
+    color: #ffffff;
+    box-shadow: 0 0 0 4px rgba(55, 146, 55, 0.1);
+}
+.mpc-step-indicator.active { color: var(--mpc-primary); }
+.mpc-step-indicator.completed .mpc-step-circle {
+    background: var(--mpc-secondary);
+    color: #ffffff;
+}
+
+/* Step Content Animations */
+.mpc-step-content {
+    display: none;
+    animation: fadeIn 0.4s ease-out;
+}
+.mpc-step-content.active { display: block; }
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(15px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Plan Selection Grid */
+.mpc-cat-header {
+    margin: 35px 0 20px 0;
+    color: var(--mpc-text-main);
+    border-bottom: 2px solid var(--mpc-border);
+    padding-bottom: 10px;
+    font-size: 1.4em;
+    font-weight: 700;
+}
+.mpc-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-bottom: 20px;
+}
+.mpc-tile {
+    border: 2px solid var(--mpc-border);
+    border-radius: var(--mpc-radius);
+    padding: 25px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    background: #ffffff;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.mpc-tile:hover {
+    border-color: var(--mpc-primary);
+    box-shadow: 0 8px 25px rgba(55, 146, 55, 0.1);
+    transform: translateY(-2px);
+}
+.mpc-tile.selected {
+    border-color: var(--mpc-primary);
+    background: #f4fdf4;
+}
+.mpc-tile.selected::after {
+    content: '✓';
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    background: var(--mpc-primary);
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+.mpc-tile-title {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: var(--mpc-text-main);
+    margin-bottom: 15px;
+    line-height: 1.4;
+}
+.mpc-tile-price {
+    font-size: 1.5em;
+    color: var(--mpc-primary);
+    font-weight: 800;
+    margin-bottom: 15px;
+}
+
+/* Forms & Inputs */
+.mpc-form-group { margin-bottom: 25px; width: 100%; box-sizing: border-box; }
+.mpc-form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--mpc-text-main);
+    font-size: 0.95em;
+}
+.mpc-form-control {
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 1em;
+    background: #ffffff;
+    transition: border-color 0.2s;
+}
+.mpc-form-control:focus {
+    outline: none;
+    border-color: var(--mpc-primary);
+    box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.1);
+}
+.mpc-form-row { display: flex; gap: 24px; width: 100%; flex-wrap: wrap; }
+.mpc-form-col { flex: 1; min-width: 240px; box-sizing: border-box; }
+
+.mpc-logistics-box {
+    margin-top: 10px;
+    padding: 20px;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Buttons */
+.mpc-nav-buttons {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 40px;
+    padding-top: 25px;
+    border-top: 1px solid var(--mpc-border);
+}
+.mpc-btn {
+    padding: 14px 30px;
+    border-radius: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    font-size: 1.05em;
+    transition: all 0.2s;
+    height: 52px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.mpc-btn-next { background: var(--mpc-primary); color: #fff; margin-left: auto; }
+.mpc-btn-next:hover:not(:disabled) { background: var(--mpc-primary-hover); transform: translateY(-1px); }
+.mpc-btn-back { background: #e2e8f0; color: #334155; }
+.mpc-btn-back:hover { background: #cbd5e1; }
+.mpc-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+
+/* ======================================================================
+   MOBILE & TABLET RESPONSIVE STYLES
+   ====================================================================== */
+@media (max-width: 992px) {
+    /* Stack Wizard and Summary on tablets */
+    .mpc-checkout-container {
+        flex-direction: column-reverse;
+        gap: 30px;
+    }
+    .mpc-summary-area {
+        width: 100%;
+        position: relative;
+        top: 0;
+    }
+    .mpc-grid {
+        grid-template-columns: repeat(2, 1fr); /* 2 columns on tablet */
+    }
+}
+
+@media (max-width: 768px) {
+    /* Full Mobile Optimizations */
+    .mpc-checkout-container {
+        padding: 0 15px;
+        margin: 20px auto;
+    }
+    .mpc-wizard-area {
+        padding: 25px 20px; /* Reduce padding to maximize screen space */
+    }
+    
+    /* Clean up the progress bar for small screens */
+    .mpc-step-indicator span {
+        display: none; /* Hide text, keep numbers */
+    }
+    .mpc-progress::before {
+        top: 12px;
+    }
+    
+    /* Force forms into single column */
+    .mpc-form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    /* 1 Column Plan Grid */
+    .mpc-grid {
+        grid-template-columns: 1fr; 
+        gap: 15px;
+    }
+    
+    /* Touch-friendly adjustments */
+    .mpc-tile {
+        padding: 20px;
+    }
+    .mpc-tile-title {
+        font-size: 1.05em;
+    }
+    .mpc-tile-price {
+        font-size: 1.3em;
+    }
+    
+    .mpc-btn {
+        padding: 12px 20px;
+        font-size: 1em;
+        width: 100%; /* Make buttons full width on mobile */
+        margin-bottom: 10px;
+    }
+    
+    .mpc-nav-buttons {
+        flex-direction: column-reverse; /* Back button on bottom, Next on top */
+    }
+    .mpc-btn-next {
+        margin-left: 0;
+        margin-bottom: 15px;
+    }
+}
