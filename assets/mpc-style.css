@@ -255,9 +255,6 @@
         position: relative;
         top: 0;
     }
-    .mpc-grid {
-        grid-template-columns: repeat(2, 1fr); /* 2 columns on tablet */
-    }
 }
 
 @media (max-width: 768px) {
@@ -267,7 +264,7 @@
         margin: 20px auto;
     }
     .mpc-wizard-area {
-        padding: 25px 20px; /* Reduce padding to maximize screen space */
+        padding: 25px 15px; /* Reduce padding to maximize screen space */
     }
     
     /* Clean up the progress bar for small screens */
@@ -284,23 +281,38 @@
         gap: 0;
     }
     
-    /* 1 Column Plan Grid */
+    /* Maintain 3 Columns for Tiles on Mobile */
     .mpc-grid {
-        grid-template-columns: 1fr; 
-        gap: 15px;
+        grid-template-columns: repeat(3, 1fr); 
+        gap: 10px; /* Reduced gap to fit */
     }
     
-    /* Touch-friendly adjustments */
+    /* Shrink the tile content to fit 3 columns on a small screen */
     .mpc-tile {
-        padding: 20px;
+        padding: 15px 8px; /* Less padding inside tile */
     }
     .mpc-tile-title {
-        font-size: 1.05em;
+        font-size: 0.85em; /* Smaller title font */
+        margin-bottom: 8px;
     }
     .mpc-tile-price {
-        font-size: 1.3em;
+        font-size: 1.1em; /* Smaller price font */
+        margin-bottom: 5px;
+    }
+    /* Scale down the checkmark */
+    .mpc-tile.selected::after { 
+        width: 20px; 
+        height: 20px; 
+        font-size: 12px; 
+        top: -5px; 
+        right: -5px; 
+    }
+    /* Hide the short description on mobile so tiles don't get too tall */
+    .mpc-tile div[style*="font-size: 0.9em"] {
+        display: none;
     }
     
+    /* Touch-friendly adjustments for buttons */
     .mpc-btn {
         padding: 12px 20px;
         font-size: 1em;
