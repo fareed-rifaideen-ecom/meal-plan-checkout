@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
- * Version: 2.6
+ * Version: 2.9
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -16,7 +16,9 @@ add_action('wp_enqueue_scripts', 'mpc_enqueue_assets');
 function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
-        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), '2.4' );
+        $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
+        $version = file_exists($css_file) ? filemtime($css_file) : '2.9';
+        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
 
@@ -176,15 +178,9 @@ function mpc_process_order() {
         'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days"))
     );
 
-    $existing_columns = $wpdb->get_col("DESCRIBE $table_subs", 0);
-    if (in_array('delivery_method', $existing_columns)) $sub_data['delivery_method'] = $delivery_method;
-    if (in_array('delivery_timing', $existing_columns)) $sub_data['delivery_timing'] = $delivery_timing;
-    if (in_array('time_slot', $existing_columns))       $sub_data['time_slot'] = $time_slot;
-    if (in_array('pickup_location', $existing_columns)) $sub_data['pickup_location'] = $pickup_location;
-    if (in_array('allergies', $existing_columns))       $sub_data['allergies'] = $allergies;
-
     $wpdb->insert($table_subs, $sub_data);
 
+    // RESTORED: Redirect to WooCommerce Checkout page after final wizard step
     wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
 }
 
@@ -270,7 +266,7 @@ function mpc_render_checkout_wizard() {
                             echo '<div class="mpc-tile-title">' . $display_title . '</div>';
                             echo '<div class="mpc-tile-price">' . wp_kses_post($price_html) . '</div>';
                             echo '</div>';
-                            if (!empty($desc)) echo '<div style="font-size: 0.9em; color: #666; margin-top: 10px;">' . wp_kses_post($desc) . '</div>';
+                            if (!empty($desc)) echo '<div class="mpc-tile-desc">' . wp_kses_post($desc) . '</div>';
                             echo '</div>';
                         }
                         echo '</div>'; 
@@ -285,14 +281,14 @@ function mpc_render_checkout_wizard() {
                 
                 <?php if ( ! is_user_logged_in() ) : ?>
                     <!-- LOGIN PROMPT FOR GUESTS -->
-                    <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
+                    <div id="mpc-login-section" class="mpc-login-box">
                         <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
                         <div id="mpc-login-form" style="display: none; margin-top: 15px;">
                             <div class="mpc-form-row">
                                 <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
                                 <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
                             </div>
-                            <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
+                            <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
                             <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
                         </div>
                     </div>
@@ -313,7 +309,7 @@ function mpc_render_checkout_wizard() {
                     );
                 ?>
                     <!-- WELCOME BANNER FOR LOGGED IN USERS -->
-                    <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
+                    <div id="mpc-logged-in-section" class="mpc-welcome-box">
                         <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
                         <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
                             <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Use my saved delivery details
