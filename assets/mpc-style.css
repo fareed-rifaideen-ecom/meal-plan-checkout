@@ -34,7 +34,7 @@
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 35px;
+    padding: 15px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
     box-sizing: border-box;
 }
