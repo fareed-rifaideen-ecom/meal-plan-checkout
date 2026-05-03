@@ -13,46 +13,43 @@
     --mpc-radius: 12px;
 }
 
-/* Enforce Box Sizing to prevent padding from breaking the grid */
-.mpc-checkout-container, 
-.mpc-checkout-container *, 
-.mpc-checkout-container *::before, 
-.mpc-checkout-container *::after {
-    box-sizing: border-box;
-}
-
-/* Base Container - Boxed View */
+/* Base Container - FIX: Forces it to fit the theme's boxed view perfectly */
 .mpc-checkout-container {
-    max-width: 1140px; /* Standard boxed width */
+    width: 100%;
+    max-width: 1200px;
     margin: 40px auto;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
     align-items: flex-start; 
-    gap: 30px;
-    padding: 0 20px;
+    gap: 30px; /* Slightly reduced gap to give tiles more room */
+    padding: 0 15px;
+    box-sizing: border-box;
     color: var(--mpc-text-main);
 }
 
 .mpc-wizard-area {
     flex: 1 1 auto; 
     min-width: 0; 
+    width: 100%;
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 40px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+    padding: 35px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+    box-sizing: border-box;
 }
 
+/* Summary Area - FIX: Reduced from 350px to 300px to un-squish desktop tiles */
 .mpc-summary-area {
-    flex: 0 0 340px; 
-    width: 340px;
+    flex: 0 0 300px; 
+    width: 300px;
     background: var(--mpc-bg-light);
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 30px;
+    padding: 25px;
     position: sticky;
     top: 40px; 
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+    box-sizing: border-box;
 }
 
 /* Progress Bar */
@@ -126,13 +123,13 @@
 .mpc-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 15px;
+    gap: 15px; /* Tighter gap to maximize tile size */
     margin-bottom: 20px;
 }
 .mpc-tile {
     border: 2px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 20px 10px; /* Reduced horizontal padding to stop text squashing */
+    padding: 25px 15px; 
     text-align: center;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -142,6 +139,7 @@
     justify-content: center;
     align-items: center;
     min-height: 130px; 
+    box-sizing: border-box;
 }
 .mpc-tile:hover {
     border-color: var(--mpc-primary);
@@ -170,19 +168,18 @@
     font-size: 1.05em; 
     font-weight: 700;
     margin-bottom: 10px;
-    line-height: 1.35;
+    line-height: 1.3;
     color: #334155;
-    word-wrap: break-word;
 }
 .mpc-tile-price {
-    font-size: 1.35em; 
+    font-size: 1.3em; 
     color: var(--mpc-primary);
     font-weight: 800;
 }
 .mpc-tile-desc {
     font-size: 0.85em;
     color: #64748b;
-    margin-top: 8px;
+    margin-top: 10px;
 }
 
 /* Box Styling */
@@ -192,15 +189,16 @@
     border-radius: 8px;
     border: 1px solid #cbd5e1;
     margin-bottom: 25px;
+    box-sizing: border-box;
 }
 .mpc-welcome-box { background: #f4fdf4; border-color: #379237; }
 
 /* Form Styling */
-.mpc-form-group { margin-bottom: 25px; width: 100%; }
+.mpc-form-group { margin-bottom: 25px; width: 100%; box-sizing: border-box; }
 .mpc-form-group label {
     display: block;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     color: var(--mpc-text-main);
     font-size: 0.95em;
 }
@@ -209,18 +207,12 @@
     padding: 14px 16px;
     border: 1px solid #cbd5e1;
     border-radius: 8px;
+    box-sizing: border-box;
     font-size: 1em;
-    background: #ffffff;
-    transition: border-color 0.2s;
-}
-.mpc-form-control:focus {
-    outline: none;
-    border-color: var(--mpc-primary);
-    box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.1);
 }
 .mpc-form-row { display: flex; gap: 20px; width: 100%; flex-wrap: wrap; margin-bottom: 10px; }
-.mpc-form-col { flex: 1; min-width: 220px; }
-.mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; }
+.mpc-form-col { flex: 1; min-width: 200px; box-sizing: border-box; }
+.mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; box-sizing: border-box; }
 
 /* Buttons */
 .mpc-nav-buttons {
@@ -240,7 +232,7 @@
     background: #334155;
     color: #fff;
     transition: opacity 0.2s;
-    font-size: 1.05em;
+    box-sizing: border-box;
 }
 .mpc-btn:hover { opacity: 0.9; }
 .mpc-btn-next { background: var(--mpc-primary); margin-left: auto; }
@@ -250,14 +242,16 @@
 /* ======================================================================
    MOBILE RESPONSIVE STYLES (Strictly Isolated)
    ====================================================================== */
-@media (max-width: 992px) {
-    .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; padding: 0 15px; }
+
+/* Triggered earlier at 1024px to prevent desktop squishing on smaller laptops */
+@media (max-width: 1024px) {
+    .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; }
     .mpc-summary-area { width: 100%; flex: none; position: relative; top: 0; }
 }
 
 @media (max-width: 768px) {
-    .mpc-checkout-container { padding: 0 15px; margin: 20px auto; }
-    .mpc-wizard-area { padding: 25px 15px; }
+    .mpc-checkout-container { padding: 0 10px; margin: 15px auto; }
+    .mpc-wizard-area { padding: 20px 15px; }
     .mpc-step-indicator span { display: none; }
     .mpc-form-row { flex-direction: column; gap: 0; }
     
