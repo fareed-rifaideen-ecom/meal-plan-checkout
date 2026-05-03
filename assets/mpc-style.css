@@ -32,7 +32,7 @@
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 30px;
+    padding: 0px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
 }
 
@@ -42,7 +42,7 @@
     background: var(--mpc-bg-light);
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 25px;
+    padding: 0px;
     position: sticky;
     top: 30px; 
 }
