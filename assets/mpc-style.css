@@ -13,43 +13,38 @@
     --mpc-radius: 12px;
 }
 
-/* Base Container - FIX: Forces it to fit the theme's boxed view perfectly */
+/* Base Container */
 .mpc-checkout-container {
-    width: 100%;
-    max-width: 1200px;
-    margin: 40px auto;
+    max-width: 1150px;
+    margin: 30px auto;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
     align-items: flex-start; 
-    gap: 30px; /* Slightly reduced gap to give tiles more room */
-    padding: 0px;
+    gap: 30px;
+    padding: 0 15px;
     box-sizing: border-box;
     color: var(--mpc-text-main);
 }
 
 .mpc-wizard-area {
-    flex: 1 1 auto; 
+    flex: 1; 
     min-width: 0; 
-    width: 100%;
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 0px;
+    padding: 30px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
-    box-sizing: border-box;
 }
 
-/* Summary Area - FIX: Reduced from 350px to 300px to un-squish desktop tiles */
 .mpc-summary-area {
-    flex: 0 0 300px; 
-    width: 300px;
+    flex: 0 0 320px; 
+    width: 320px;
     background: var(--mpc-bg-light);
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
     padding: 25px;
     position: sticky;
-    top: 40px; 
-    box-sizing: border-box;
+    top: 30px; 
 }
 
 /* Progress Bar */
@@ -113,23 +108,23 @@
 
 /* Grid & Tiles - DESKTOP */
 .mpc-cat-header {
-    margin: 35px 0 20px 0;
+    margin: 30px 0 15px 0;
     color: var(--mpc-text-main);
     border-bottom: 2px solid var(--mpc-border);
-    padding-bottom: 10px;
+    padding-bottom: 8px;
     font-size: 1.3em;
     font-weight: 700;
 }
 .mpc-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 15px; /* Tighter gap to maximize tile size */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 15px;
     margin-bottom: 20px;
 }
 .mpc-tile {
     border: 2px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 25px 15px; 
+    padding: 20px 10px; /* Reduced to give text breathing room */
     text-align: center;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -138,8 +133,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: 130px; 
-    box-sizing: border-box;
+    min-height: 120px; 
 }
 .mpc-tile:hover {
     border-color: var(--mpc-primary);
@@ -165,19 +159,20 @@
     font-weight: bold;
 }
 .mpc-tile-title {
-    font-size: 1.05em; 
+    font-size: 1.05em; /* Correctly scaled for desktop tiles */
     font-weight: 700;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     line-height: 1.3;
     color: #334155;
+    word-wrap: break-word;
 }
 .mpc-tile-price {
-    font-size: 1.3em; 
+    font-size: 1.3em;
     color: var(--mpc-primary);
     font-weight: 800;
 }
 .mpc-tile-desc {
-    font-size: 0.85em;
+    font-size: 0.9em;
     color: #64748b;
     margin-top: 10px;
 }
@@ -189,19 +184,10 @@
     border-radius: 8px;
     border: 1px solid #cbd5e1;
     margin-bottom: 25px;
-    box-sizing: border-box;
 }
 .mpc-welcome-box { background: #f4fdf4; border-color: #379237; }
 
 /* Form Styling */
-.mpc-form-group { margin-bottom: 25px; width: 100%; box-sizing: border-box; }
-.mpc-form-group label {
-    display: block;
-    font-weight: 600;
-    margin-bottom: 10px;
-    color: var(--mpc-text-main);
-    font-size: 0.95em;
-}
 .mpc-form-control {
     width: 100%;
     padding: 14px 16px;
@@ -211,28 +197,27 @@
     font-size: 1em;
 }
 .mpc-form-row { display: flex; gap: 20px; width: 100%; flex-wrap: wrap; margin-bottom: 10px; }
-.mpc-form-col { flex: 1; min-width: 200px; box-sizing: border-box; }
-.mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; box-sizing: border-box; }
+.mpc-form-col { flex: 1; min-width: 200px; }
+.mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; }
 
 /* Buttons */
 .mpc-nav-buttons {
     display: flex;
     justify-content: space-between;
-    margin-top: 40px;
-    padding-top: 25px;
+    margin-top: 30px;
+    padding-top: 20px;
     border-top: 1px solid var(--mpc-border);
 }
 .mpc-btn {
-    padding: 0 30px;
+    padding: 0 25px;
     border-radius: 8px;
     font-weight: 700;
     cursor: pointer;
     border: none;
-    height: 52px;
+    height: 48px;
     background: #334155;
     color: #fff;
     transition: opacity 0.2s;
-    box-sizing: border-box;
 }
 .mpc-btn:hover { opacity: 0.9; }
 .mpc-btn-next { background: var(--mpc-primary); margin-left: auto; }
@@ -242,9 +227,7 @@
 /* ======================================================================
    MOBILE RESPONSIVE STYLES (Strictly Isolated)
    ====================================================================== */
-
-/* Triggered earlier at 1024px to prevent desktop squishing on smaller laptops */
-@media (max-width: 1024px) {
+@media (max-width: 992px) {
     .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; }
     .mpc-summary-area { width: 100%; flex: none; position: relative; top: 0; }
 }
