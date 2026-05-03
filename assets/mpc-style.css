@@ -233,7 +233,7 @@
 }
 
 @media (max-width: 768px) {
-    .mpc-checkout-container { padding: 0 10px; margin: 15px auto; }
+    .mpc-checkout-container { padding: 0 0px; margin: 15px auto; }
     .mpc-wizard-area { padding: 20px 15px; }
     .mpc-step-indicator span { display: none; }
     .mpc-form-row { flex-direction: column; gap: 0; }
