@@ -13,38 +13,46 @@
     --mpc-radius: 12px;
 }
 
-/* Base Container */
+/* Enforce Box Sizing to prevent padding from breaking the grid */
+.mpc-checkout-container, 
+.mpc-checkout-container *, 
+.mpc-checkout-container *::before, 
+.mpc-checkout-container *::after {
+    box-sizing: border-box;
+}
+
+/* Base Container - Boxed View */
 .mpc-checkout-container {
-    max-width: 1200px;
+    max-width: 1140px; /* Standard boxed width */
     margin: 40px auto;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
     align-items: flex-start; 
-    gap: 40px;
+    gap: 30px;
     padding: 0 20px;
-    box-sizing: border-box;
     color: var(--mpc-text-main);
 }
 
 .mpc-wizard-area {
-    flex: 1; 
+    flex: 1 1 auto; 
     min-width: 0; 
     background: #ffffff;
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
     padding: 40px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
 }
 
 .mpc-summary-area {
-    flex: 0 0 350px; 
-    width: 350px;
+    flex: 0 0 340px; 
+    width: 340px;
     background: var(--mpc-bg-light);
     border: 1px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
     padding: 30px;
     position: sticky;
     top: 40px; 
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
 }
 
 /* Progress Bar */
@@ -112,19 +120,19 @@
     color: var(--mpc-text-main);
     border-bottom: 2px solid var(--mpc-border);
     padding-bottom: 10px;
-    font-size: 1.4em;
+    font-size: 1.3em;
     font-weight: 700;
 }
 .mpc-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
+    gap: 15px;
     margin-bottom: 20px;
 }
 .mpc-tile {
     border: 2px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 30px 15px; /* Increased padding for Desktop */
+    padding: 20px 10px; /* Reduced horizontal padding to stop text squashing */
     text-align: center;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -133,7 +141,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: 140px; /* Taller for Desktop */
+    min-height: 130px; 
 }
 .mpc-tile:hover {
     border-color: var(--mpc-primary);
@@ -159,21 +167,22 @@
     font-weight: bold;
 }
 .mpc-tile-title {
-    font-size: 1.15em; /* Larger for Desktop */
+    font-size: 1.05em; 
     font-weight: 700;
-    margin-bottom: 12px;
-    line-height: 1.4;
+    margin-bottom: 10px;
+    line-height: 1.35;
     color: #334155;
+    word-wrap: break-word;
 }
 .mpc-tile-price {
-    font-size: 1.5em; /* Larger for Desktop */
+    font-size: 1.35em; 
     color: var(--mpc-primary);
     font-weight: 800;
 }
 .mpc-tile-desc {
-    font-size: 0.9em;
+    font-size: 0.85em;
     color: #64748b;
-    margin-top: 10px;
+    margin-top: 8px;
 }
 
 /* Box Styling */
@@ -187,16 +196,30 @@
 .mpc-welcome-box { background: #f4fdf4; border-color: #379237; }
 
 /* Form Styling */
+.mpc-form-group { margin-bottom: 25px; width: 100%; }
+.mpc-form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--mpc-text-main);
+    font-size: 0.95em;
+}
 .mpc-form-control {
     width: 100%;
     padding: 14px 16px;
     border: 1px solid #cbd5e1;
     border-radius: 8px;
-    box-sizing: border-box;
     font-size: 1em;
+    background: #ffffff;
+    transition: border-color 0.2s;
 }
-.mpc-form-row { display: flex; gap: 24px; width: 100%; flex-wrap: wrap; margin-bottom: 10px; }
-.mpc-form-col { flex: 1; min-width: 240px; }
+.mpc-form-control:focus {
+    outline: none;
+    border-color: var(--mpc-primary);
+    box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.1);
+}
+.mpc-form-row { display: flex; gap: 20px; width: 100%; flex-wrap: wrap; margin-bottom: 10px; }
+.mpc-form-col { flex: 1; min-width: 220px; }
 .mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; }
 
 /* Buttons */
@@ -217,6 +240,7 @@
     background: #334155;
     color: #fff;
     transition: opacity 0.2s;
+    font-size: 1.05em;
 }
 .mpc-btn:hover { opacity: 0.9; }
 .mpc-btn-next { background: var(--mpc-primary); margin-left: auto; }
@@ -227,13 +251,13 @@
    MOBILE RESPONSIVE STYLES (Strictly Isolated)
    ====================================================================== */
 @media (max-width: 992px) {
-    .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; }
+    .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; padding: 0 15px; }
     .mpc-summary-area { width: 100%; flex: none; position: relative; top: 0; }
 }
 
 @media (max-width: 768px) {
-    .mpc-checkout-container { padding: 0 10px; margin: 15px auto; }
-    .mpc-wizard-area { padding: 20px 15px; }
+    .mpc-checkout-container { padding: 0 15px; margin: 20px auto; }
+    .mpc-wizard-area { padding: 25px 15px; }
     .mpc-step-indicator span { display: none; }
     .mpc-form-row { flex-direction: column; gap: 0; }
     
