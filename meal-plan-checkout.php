@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
- * Version: 2.6
+ * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
+ * Version: 2.8
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -10,13 +10,15 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 // ==========================================
-// 1. ENQUEUE SCRIPTS & STYLES
+// 1. ENQUEUE SCRIPTS & STYLES (With Cache Busting)
 // ==========================================
 add_action('wp_enqueue_scripts', 'mpc_enqueue_assets');
 function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
-        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), '2.4' );
+        $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
+        $version = file_exists($css_file) ? filemtime($css_file) : '2.8';
+        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
 
@@ -97,7 +99,6 @@ function mpc_process_order() {
         $categories[] = 'Snacks';
     }
 
-    // SECURITY FIX: Properly Handle Logged in vs Guest Users
     $user_id = get_current_user_id();
     
     if (!$user_id) {
@@ -110,7 +111,6 @@ function mpc_process_order() {
             wp_send_json_error( $user_id->get_error_message() );
         }
         
-        // Auto-login the newly created user
         wp_clear_auth_cookie();
         wp_set_current_user($user_id);
         wp_set_auth_cookie($user_id, true);
@@ -120,7 +120,6 @@ function mpc_process_order() {
     update_user_meta($user_id, 'billing_phone', $phone);
     update_user_meta($user_id, 'billing_address_1', $address_1);
     update_user_meta($user_id, 'billing_address_2', $address_2);
-    // Hardcode Dubai constraint
     update_user_meta($user_id, 'billing_city', 'Dubai');
     update_user_meta($user_id, 'billing_country', 'AE');
     
@@ -133,16 +132,9 @@ function mpc_process_order() {
     $order = wc_create_order(array('customer_id' => $user_id));
     $order->add_product($product, 1);
 
-    // Hardcode Dubai constraint
     $address = array(
-        'first_name' => $first_name,
-        'last_name'  => $last_name,
-        'email'      => $email,
-        'phone'      => $phone,
-        'address_1'  => $address_1,
-        'address_2'  => $address_2,
-        'city'       => 'Dubai',
-        'country'    => 'AE',
+        'first_name' => $first_name, 'last_name'  => $last_name, 'email'      => $email, 'phone'      => $phone,
+        'address_1'  => $address_1, 'address_2'  => $address_2, 'city'       => 'Dubai', 'country'    => 'AE',
     );
     $order->set_address($address, 'billing');
     $order->set_address($address, 'shipping');
@@ -168,26 +160,13 @@ function mpc_process_order() {
     if (stripos($plan_title, '3') !== false && stripos($plan_title, 'juice') !== false) $days = 3;
 
     $sub_data = array(
-        'user_id'            => $user_id,
-        'wc_order_id'        => $order->get_id(),
-        'plan_name'          => $plan_title,
-        'total_days'         => $days,
-        'allowed_categories' => implode(',', $categories),
-        'status'             => 'pending', 
-        'start_date'         => date('Y-m-d H:i:s'),
-        'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days"))
+        'user_id' => $user_id, 'wc_order_id' => $order->get_id(), 'plan_name' => $plan_title,
+        'total_days' => $days, 'allowed_categories' => implode(',', $categories), 'status' => 'pending', 
+        'start_date' => date('Y-m-d H:i:s'), 'expiry_date' => date('Y-m-d H:i:s', strtotime("+$days days"))
     );
-
-    $existing_columns = $wpdb->get_col("DESCRIBE $table_subs", 0);
-    if (in_array('delivery_method', $existing_columns)) $sub_data['delivery_method'] = $delivery_method;
-    if (in_array('delivery_timing', $existing_columns)) $sub_data['delivery_timing'] = $delivery_timing;
-    if (in_array('time_slot', $existing_columns))       $sub_data['time_slot'] = $time_slot;
-    if (in_array('pickup_location', $existing_columns)) $sub_data['pickup_location'] = $pickup_location;
-    if (in_array('allergies', $existing_columns))       $sub_data['allergies'] = $allergies;
 
     $wpdb->insert($table_subs, $sub_data);
 
-    // RESTORED: Redirect to WooCommerce Checkout page after final wizard step
     wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
 }
 
@@ -231,7 +210,6 @@ function mpc_render_checkout_wizard() {
 
     ob_start();
     ?>
-    
     <div class="mpc-checkout-container">
         
         <div class="mpc-wizard-area">
@@ -287,8 +265,7 @@ function mpc_render_checkout_wizard() {
                 <h2 style="margin-top: 0; color: #222;">Delivery Information</h2>
                 
                 <?php if ( ! is_user_logged_in() ) : ?>
-                    <!-- LOGIN PROMPT FOR GUESTS -->
-                    <div id="mpc-login-section" class="mpc-login-box">
+                    <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
                         <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
                         <div id="mpc-login-form" style="display: none; margin-top: 15px;">
                             <div class="mpc-form-row">
@@ -300,23 +277,15 @@ function mpc_render_checkout_wizard() {
                         </div>
                     </div>
                 <?php else: 
-                    // GET SAVED DATA FOR LOGGED IN USERS
                     $current_user = wp_get_current_user();
                     $saved_data = array(
-                        'first_name' => $current_user->first_name,
-                        'last_name'  => $current_user->last_name,
-                        'email'      => $current_user->user_email,
-                        'phone'      => get_user_meta($current_user->ID, 'billing_phone', true),
-                        'address_1'  => get_user_meta($current_user->ID, 'billing_address_1', true),
-                        'address_2'  => get_user_meta($current_user->ID, 'billing_address_2', true),
-                        'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true),
-                        'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
-                        'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true),
-                        'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
+                        'first_name' => $current_user->first_name, 'last_name'  => $current_user->last_name, 'email'      => $current_user->user_email,
+                        'phone'      => get_user_meta($current_user->ID, 'billing_phone', true), 'address_1'  => get_user_meta($current_user->ID, 'billing_address_1', true), 'address_2'  => get_user_meta($current_user->ID, 'billing_address_2', true),
+                        'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true), 'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
+                        'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true), 'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
                     );
                 ?>
-                    <!-- WELCOME BANNER FOR LOGGED IN USERS -->
-                    <div id="mpc-logged-in-section" class="mpc-welcome-box">
+                    <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
                         <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
                         <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
                             <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Use my saved delivery details
@@ -502,7 +471,6 @@ function mpc_render_checkout_wizard() {
             }
         });
 
-        // HANDLE LOGGED IN AUTO-FILL
         function populateFields(data) {
             if(data.first_name) document.getElementById('mpc_first_name').value = data.first_name;
             if(data.last_name) document.getElementById('mpc_last_name').value = data.last_name;
@@ -532,7 +500,6 @@ function mpc_render_checkout_wizard() {
             updateLogisticsSummary();
         }
 
-        // Attach event to PHP injected checkbox (if logged in on page load)
         let useSavedCheckbox = document.getElementById('mpc_use_saved_details');
         if (useSavedCheckbox) {
             useSavedCheckbox.addEventListener('change', function() {
@@ -542,7 +509,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // HANDLE AJAX LOGIN
         let showLogin = document.getElementById('mpc-show-login');
         if(showLogin) {
             showLogin.addEventListener('click', function(e) {
@@ -576,17 +542,14 @@ function mpc_render_checkout_wizard() {
                 .then(response => {
                     if(response.success) {
                         isUserLoggedIn = true;
-                        // Hide password creation and login box
                         document.getElementById('mpc_password_group').style.display = 'none';
                         
-                        // Show welcome banner with new checkbox
                         let welcomeHTML = '<div style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">';
                         welcomeHTML += '<p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, ' + response.data.first_name + '!</strong></p>';
                         welcomeHTML += '<label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;"><input type="checkbox" id="mpc_use_saved_details_ajax" style="transform: scale(1.2);"> Use my saved delivery details</label></div>';
                         
                         document.getElementById('mpc-login-section').innerHTML = welcomeHTML;
                         
-                        // Attach event to the newly created checkbox
                         document.getElementById('mpc_use_saved_details_ajax').addEventListener('change', function() {
                             if(this.checked) populateFields(response.data);
                         });
@@ -604,7 +567,6 @@ function mpc_render_checkout_wizard() {
                 });
             });
         }
-
 
         function mpcSaveState() {
             const state = {
@@ -638,13 +600,15 @@ function mpc_render_checkout_wizard() {
                     if(state.firstName) document.getElementById('mpc_first_name').value = state.firstName;
                     if(state.lastName) document.getElementById('mpc_last_name').value = state.lastName;
                     
-                    // Only fill email if NOT logged in (to prevent overwriting the readonly field)
                     if(state.email && !isUserLoggedIn) document.getElementById('mpc_email').value = state.email;
                     
                     if(state.phone) document.getElementById('mpc_phone').value = state.phone;
                     if(state.address1) document.getElementById('mpc_address_1').value = state.address1;
                     if(state.address2) document.getElementById('mpc_address_2').value = state.address2;
-                    if(state.deliveryMethod) document.getElementById('mpc_delivery_method').value = state.deliveryMethod;
+                    if(state.deliveryMethod) {
+                        document.getElementById('mpc_delivery_method').value = state.deliveryMethod;
+                        document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
+                    }
                     if(state.deliveryTiming) document.getElementById('mpc_delivery_timing').value = state.deliveryTiming;
                     if(state.timeSlot) document.getElementById('mpc_time_slot').value = state.timeSlot;
                     if(state.pickupBranch) document.getElementById('mpc_pickup_branch').value = state.pickupBranch;
@@ -674,7 +638,6 @@ function mpc_render_checkout_wizard() {
             
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
-                document.getElementById('mpc-summary-meals').style.display = 'none';
                 document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '50%');
                 totalSteps = 2;
                 
@@ -771,7 +734,6 @@ function mpc_render_checkout_wizard() {
 
         function mpcChangeStep(direction) {
             if (direction === 1 && currentStep === 2) {
-                // Determine if password field is required (only if not logged in)
                 let pwdVal = document.getElementById('mpc_password').value;
                 if(!document.getElementById('mpc_first_name').value || !document.getElementById('mpc_email').value || (!isUserLoggedIn && !pwdVal) || !document.getElementById('mpc_phone').value || !document.getElementById('mpc_address_1').value) {
                     alert('Please fill out all mandatory fields (Name, Email, Phone, Address, Password).'); return;
@@ -780,7 +742,6 @@ function mpc_render_checkout_wizard() {
                 if (method === 'Delivery' && !document.getElementById('mpc_delivery_zone_check').checked) { alert('Please confirm you are within the delivery zone to proceed.'); return; }
                 if (method === 'Pickup' && !document.getElementById('mpc_pickup_branch').value) { alert('Please select a pickup branch.'); return; }
                 
-                // If it's a Juice plan, Step 2 is the Final Step
                 if (checkoutData.isJuice) {
                     mpcSubmitOrder(document.getElementById('btn-next-2'));
                     return;
@@ -793,7 +754,6 @@ function mpc_render_checkout_wizard() {
                     alert(`Your plan requires exactly ${checkoutData.allowedMeals} main meal categories.`); return;
                 }
                 
-                // Step 3 is the Final Step for Normal Plans
                 mpcSubmitOrder(document.getElementById('btn-next-3'));
                 return;
             }
@@ -831,7 +791,6 @@ function mpc_render_checkout_wizard() {
             formData.append('last_name', document.getElementById('mpc_last_name').value);
             formData.append('email', document.getElementById('mpc_email').value);
             formData.append('phone', document.getElementById('mpc_phone').value);
-            // Include password only if it's a new registration
             if (!isUserLoggedIn) {
                 formData.append('password', document.getElementById('mpc_password').value);
             }
@@ -863,7 +822,6 @@ function mpc_render_checkout_wizard() {
             });
         }
         
-        // Initial run to ensure timing is correct
         mpcAdjustTimingOptions();
         updateLogisticsSummary();
     </script>
