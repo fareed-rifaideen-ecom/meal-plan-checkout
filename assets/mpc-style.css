@@ -22,7 +22,7 @@
     display: flex;
     align-items: flex-start; 
     gap: 30px; /* Slightly reduced gap to give tiles more room */
-    padding: 0 15px;
+    padding: 0px;
     box-sizing: border-box;
     color: var(--mpc-text-main);
 }
