@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
- * Version: 2.9
+ * Version: 2.6
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -16,9 +16,7 @@ add_action('wp_enqueue_scripts', 'mpc_enqueue_assets');
 function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
-        $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version = file_exists($css_file) ? filemtime($css_file) : '2.9';
-        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
+        wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), '2.4' );
     }
 }
 
@@ -122,6 +120,7 @@ function mpc_process_order() {
     update_user_meta($user_id, 'billing_phone', $phone);
     update_user_meta($user_id, 'billing_address_1', $address_1);
     update_user_meta($user_id, 'billing_address_2', $address_2);
+    // Hardcode Dubai constraint
     update_user_meta($user_id, 'billing_city', 'Dubai');
     update_user_meta($user_id, 'billing_country', 'AE');
     
@@ -134,6 +133,7 @@ function mpc_process_order() {
     $order = wc_create_order(array('customer_id' => $user_id));
     $order->add_product($product, 1);
 
+    // Hardcode Dubai constraint
     $address = array(
         'first_name' => $first_name,
         'last_name'  => $last_name,
@@ -177,6 +177,13 @@ function mpc_process_order() {
         'start_date'         => date('Y-m-d H:i:s'),
         'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days"))
     );
+
+    $existing_columns = $wpdb->get_col("DESCRIBE $table_subs", 0);
+    if (in_array('delivery_method', $existing_columns)) $sub_data['delivery_method'] = $delivery_method;
+    if (in_array('delivery_timing', $existing_columns)) $sub_data['delivery_timing'] = $delivery_timing;
+    if (in_array('time_slot', $existing_columns))       $sub_data['time_slot'] = $time_slot;
+    if (in_array('pickup_location', $existing_columns)) $sub_data['pickup_location'] = $pickup_location;
+    if (in_array('allergies', $existing_columns))       $sub_data['allergies'] = $allergies;
 
     $wpdb->insert($table_subs, $sub_data);
 
@@ -266,7 +273,7 @@ function mpc_render_checkout_wizard() {
                             echo '<div class="mpc-tile-title">' . $display_title . '</div>';
                             echo '<div class="mpc-tile-price">' . wp_kses_post($price_html) . '</div>';
                             echo '</div>';
-                            if (!empty($desc)) echo '<div class="mpc-tile-desc">' . wp_kses_post($desc) . '</div>';
+                            if (!empty($desc)) echo '<div style="font-size: 0.9em; color: #666; margin-top: 10px;">' . wp_kses_post($desc) . '</div>';
                             echo '</div>';
                         }
                         echo '</div>'; 
@@ -288,7 +295,7 @@ function mpc_render_checkout_wizard() {
                                 <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
                                 <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
                             </div>
-                            <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
+                            <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
                             <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
                         </div>
                     </div>
