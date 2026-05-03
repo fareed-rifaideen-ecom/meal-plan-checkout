@@ -27,7 +27,7 @@
 }
 
 .mpc-wizard-area {
-    flex: 1 1 auto; 
+    flex: 1; 
     min-width: 0; 
     background: #ffffff;
     border: 1px solid var(--mpc-border);
@@ -106,7 +106,7 @@
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* Grid & Tiles */
+/* Grid & Tiles - DESKTOP */
 .mpc-cat-header {
     margin: 35px 0 20px 0;
     color: var(--mpc-text-main);
@@ -124,7 +124,7 @@
 .mpc-tile {
     border: 2px solid var(--mpc-border);
     border-radius: var(--mpc-radius);
-    padding: 25px 20px;
+    padding: 30px 15px; /* Increased padding for Desktop */
     text-align: center;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -133,6 +133,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
+    min-height: 140px; /* Taller for Desktop */
 }
 .mpc-tile:hover {
     border-color: var(--mpc-primary);
@@ -155,18 +156,35 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    font-weight: bold;
 }
 .mpc-tile-title {
-    font-size: 1.1em;
+    font-size: 1.15em; /* Larger for Desktop */
     font-weight: 700;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     line-height: 1.4;
+    color: #334155;
 }
 .mpc-tile-price {
-    font-size: 1.4em;
+    font-size: 1.5em; /* Larger for Desktop */
     color: var(--mpc-primary);
     font-weight: 800;
 }
+.mpc-tile-desc {
+    font-size: 0.9em;
+    color: #64748b;
+    margin-top: 10px;
+}
+
+/* Box Styling */
+.mpc-login-box, .mpc-welcome-box {
+    background: #f8fafc;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    margin-bottom: 25px;
+}
+.mpc-welcome-box { background: #f4fdf4; border-color: #379237; }
 
 /* Form Styling */
 .mpc-form-control {
@@ -177,8 +195,9 @@
     box-sizing: border-box;
     font-size: 1em;
 }
-.mpc-form-row { display: flex; gap: 24px; width: 100%; flex-wrap: wrap; }
+.mpc-form-row { display: flex; gap: 24px; width: 100%; flex-wrap: wrap; margin-bottom: 10px; }
 .mpc-form-col { flex: 1; min-width: 240px; }
+.mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; }
 
 /* Buttons */
 .mpc-nav-buttons {
@@ -189,19 +208,23 @@
     border-top: 1px solid var(--mpc-border);
 }
 .mpc-btn {
-    padding: 14px 30px;
+    padding: 0 30px;
     border-radius: 8px;
     font-weight: 700;
     cursor: pointer;
     border: none;
     height: 52px;
+    background: #334155;
+    color: #fff;
+    transition: opacity 0.2s;
 }
-.mpc-btn-next { background: var(--mpc-primary); color: #fff; margin-left: auto; }
+.mpc-btn:hover { opacity: 0.9; }
+.mpc-btn-next { background: var(--mpc-primary); margin-left: auto; }
 .mpc-btn-back { background: #e2e8f0; color: #334155; }
 
 
 /* ======================================================================
-   MOBILE RESPONSIVE STYLES (Aggressive Overrides)
+   MOBILE RESPONSIVE STYLES (Strictly Isolated)
    ====================================================================== */
 @media (max-width: 992px) {
     .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; }
@@ -214,7 +237,7 @@
     .mpc-step-indicator span { display: none; }
     .mpc-form-row { flex-direction: column; gap: 0; }
     
-    /* FIX: Force 3 Columns on Mobile & override theme stack */
+    /* Mobile Grid Force */
     .mpc-grid {
         display: grid !important;
         grid-template-columns: repeat(3, minmax(0, 1fr)) !important; 
@@ -222,19 +245,16 @@
         width: 100% !important;
     }
     
-    /* Shrink tiles to fit 3-across */
+    /* Mobile Tile Shrink */
     .mpc-tile {
+        padding: 12px 4px !important; 
+        min-height: 100px !important;
         width: auto !important;
-        margin: 0 !important;
-        padding: 10px 4px !important; 
-        min-height: 90px;
-        box-sizing: border-box !important;
     }
     .mpc-tile-title {
         font-size: 0.72em !important; 
         margin-bottom: 5px !important;
         line-height: 1.1 !important;
-        white-space: normal !important;
     }
     .mpc-tile-price {
         font-size: 0.9em !important; 
@@ -242,9 +262,7 @@
     .mpc-tile.selected::after { 
         width: 18px !important; height: 18px !important; font-size: 10px !important; top: -6px !important; right: -6px !important; 
     }
-
-    /* Prevent tall mobile tiles */
-    .mpc-tile div[style*="font-size: 0.9em"] { display: none !important; }
+    .mpc-tile-desc { display: none !important; }
     
     .mpc-btn { width: 100%; margin-bottom: 10px; }
     .mpc-nav-buttons { flex-direction: column-reverse; }
