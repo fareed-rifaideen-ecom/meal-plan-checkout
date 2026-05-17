@@ -660,14 +660,6 @@ function mpc_render_checkout_wizard() {
                 }
             }
             updateLogisticsSummary();
-
-            // NEW: Smoothly scroll down to the "Next" button so the user sees it
-            setTimeout(function() {
-                let nextBtn = document.getElementById('btn-next-1');
-                if (nextBtn) {
-                    nextBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }, 150);
         }
 
         function mpcAdjustTimingOptions() {
