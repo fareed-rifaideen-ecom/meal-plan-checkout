@@ -660,8 +660,26 @@ function mpc_render_checkout_wizard() {
                 }
             }
             updateLogisticsSummary();
-        }
 
+            // BULLETPROOF SCROLL: Calculates exact pixel position and scrolls safely
+            setTimeout(function() {
+                let nextBtn = document.getElementById('btn-next-1');
+                if (nextBtn) {
+                    // 1. Get the exact Y position of the button on the page
+                    let elementPosition = nextBtn.getBoundingClientRect().top + window.scrollY;
+                    
+                    // 2. Subtract 150 pixels to account for sticky headers and give breathing room
+                    let offsetPosition = elementPosition - 150;
+
+                    // 3. Command the window to scroll to that exact pixel
+                    window.scrollTo({
+                        top: offsetPosition,
+                        behavior: 'smooth'
+                    });
+                }
+            }, 250); 
+        }
+        
         function mpcAdjustTimingOptions() {
             const method = document.getElementById('mpc_delivery_method').value;
             const timeSlotSelect = document.getElementById('mpc_time_slot');
