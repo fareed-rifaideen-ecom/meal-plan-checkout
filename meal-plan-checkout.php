@@ -976,4 +976,54 @@ function mpc_render_customer_profile() {
     <?php
     return ob_get_clean();
 }
+
+// ==========================================
+// 7. PAYMENT VERIFICATION BRIDGE
+// ==========================================
+add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
+function mpc_verify_ngenius_payment_return() {
+    // Only run this script if the customer lands on the WooCommerce order-received page with a gateway reference
+    if ( is_wc_endpoint_url( 'order-received' ) && isset($_GET['ref']) ) {
+        global $wp;
+        $order_id = absint( $wp->query_vars['order-received'] );
+        $order    = wc_get_order( $order_id );
+        
+        // Skip if the order is missing or already marked as paid
+        if ( ! $order || $order->is_paid() ) {
+            return;
+        }
+
+        $reference = sanitize_text_field($_GET['ref']);
+        
+        // Ask the main website to verify the payment status
+        $main_site_url = 'https://staging3.thecyclehub.com'; 
+        $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
+
+        $response = wp_remote_post( $endpoint, array(
+            'headers' => array(
+                'Content-Type'   => 'application/json',
+                'x-bistro-token' => BISTRO_BRIDGE_SECRET
+            ),
+            'body'    => wp_json_encode( array('reference' => $reference) ),
+            'timeout' => 15,
+        ));
+
+        if ( ! is_wp_error( $response ) ) {
+            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+            
+            if ( isset($body['success']) && $body['success'] === true ) {
+                $state = $body['state'];
+                
+                if ( $state === 'CAPTURED' || $state === 'AUTHORISED' ) {
+                    // Payment successful! Mark order as processing
+                    $order->payment_complete( $reference );
+                    $order->add_order_note('Payment successfully captured via N-Genius Bridge. Reference: ' . $reference);
+                } else {
+                    // Payment failed or declined
+                    $order->update_status('failed', 'Payment failed or declined via N-Genius Bridge. State: ' . $state);
+                }
+            }
+        }
+    }
+}
 // END OF FILE
