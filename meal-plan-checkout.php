@@ -169,7 +169,7 @@ function mpc_process_order() {
     $wpdb->insert($table_subs, $sub_data);
 
     // --- START OF CUSTOM PAYMENT BRIDGE ---
-    $main_site_url = 'https://staging3.thecyclehub.com'; 
+    $main_site_url = 'https://thecyclehub.com'; 
     $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
 
     $payload = array(
