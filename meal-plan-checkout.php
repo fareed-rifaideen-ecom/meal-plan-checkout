@@ -1006,24 +1006,34 @@ function mpc_verify_ngenius_payment_return() {
                 'x-bistro-token' => BISTRO_BRIDGE_SECRET
             ),
             'body'    => wp_json_encode( array('reference' => $reference) ),
-            'timeout' => 15,
+            'timeout' => 20,
         ));
 
-        if ( ! is_wp_error( $response ) ) {
-            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        // If the server physically blocks the request (e.g., Firewall, SSL error)
+        if ( is_wp_error( $response ) ) {
+            $order->add_order_note('Bridge Error: Server failed to connect to main website. ' . $response->get_error_message());
+            return;
+        }
+
+        $response_code = wp_remote_retrieve_response_code( $response );
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        
+        if ( $response_code === 200 && isset($body['success']) && $body['success'] === true ) {
+            $state = $body['state'];
             
-            if ( isset($body['success']) && $body['success'] === true ) {
-                $state = $body['state'];
-                
-                if ( $state === 'CAPTURED' || $state === 'AUTHORISED' ) {
-                    // Payment successful! Mark order as processing
-                    $order->payment_complete( $reference );
-                    $order->add_order_note('Payment successfully captured via N-Genius Bridge. Reference: ' . $reference);
-                } else {
-                    // Payment failed or declined
-                    $order->update_status('failed', 'Payment failed or declined via N-Genius Bridge. State: ' . $state);
-                }
+            // Allow all known N-Genius success states
+            if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {
+                // Payment successful! Mark order as processing
+                $order->payment_complete( $reference );
+                $order->add_order_note('Payment successfully captured via N-Genius Bridge. State: ' . $state . ' | Reference: ' . $reference);
+            } else {
+                // Payment failed or declined
+                $order->update_status('failed', 'Payment failed or declined via N-Genius Bridge. State: ' . $state);
             }
+        } else {
+            // Log any API rejection messages from the main website
+            $error_msg = isset($body['message']) ? $body['message'] : 'HTTP Status Code ' . $response_code;
+            $order->add_order_note('Bridge Verification Failed: ' . $error_msg);
         }
     }
 }
