@@ -997,7 +997,7 @@ function mpc_verify_ngenius_payment_return() {
         $reference = sanitize_text_field($_GET['ref']);
         
         // Ask the main website to verify the payment status
-        $main_site_url = 'https://staging3.thecyclehub.com'; 
+        $main_site_url = 'https://thecyclehub.com'; 
         $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
 
         $response = wp_remote_post( $endpoint, array(
