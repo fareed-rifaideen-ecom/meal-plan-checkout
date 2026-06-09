@@ -157,6 +157,7 @@ function mpc_process_order() {
     if (stripos($plan_title, '7') !== false) $days = 7;
     if (stripos($plan_title, '20') !== false) $days = 20;
     if (stripos($plan_title, '24') !== false) $days = 24;
+    if (stripos($plan_title, '5') !== false) $days = 5;
     if (stripos($plan_title, '3') !== false && stripos($plan_title, 'juice') !== false) $days = 3;
 
     $sub_data = array(
