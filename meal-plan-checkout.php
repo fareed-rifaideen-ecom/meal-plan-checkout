@@ -168,7 +168,46 @@ function mpc_process_order() {
 
     $wpdb->insert($table_subs, $sub_data);
 
-    wp_send_json_success(array('payment_url' => $order->get_checkout_payment_url()));
+    // --- START OF CUSTOM PAYMENT BRIDGE ---
+    $main_site_url = 'https://staging3.thecyclehub.com'; 
+    $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
+
+    $payload = array(
+        'order_id'   => $order->get_id(),
+        'amount'     => $order->get_total(),
+        'currency'   => $order->get_currency(),
+        'email'      => $email,
+        'first_name' => $first_name,
+        'last_name'  => $last_name,
+        'return_url' => $order->get_checkout_order_received_url()
+    );
+
+    $response = wp_remote_post( $endpoint, array(
+        'headers' => array(
+            'Content-Type'   => 'application/json',
+            'x-bistro-token' => BISTRO_BRIDGE_SECRET
+        ),
+        'body'    => wp_json_encode( $payload ),
+        'timeout' => 20,
+    ));
+
+    if ( is_wp_error( $response ) ) {
+        wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
+    }
+
+    $body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+    if ( isset( $body['success'] ) && $body['success'] === true ) {
+        // Save the N-Genius reference to the local order
+        $order->update_meta_data( '_ngenius_reference', sanitize_text_field( $body['reference'] ) );
+        $order->save();
+        
+        wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
+    } else {
+        $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
+        wp_send_json_error( 'Gateway Error: ' . $error_message );
+    }
+    // --- END OF CUSTOM PAYMENT BRIDGE ---
 }
 
 // ==========================================
@@ -937,5 +976,55 @@ function mpc_render_customer_profile() {
     </div>
     <?php
     return ob_get_clean();
+}
+
+// ==========================================
+// 7. PAYMENT VERIFICATION BRIDGE
+// ==========================================
+add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
+function mpc_verify_ngenius_payment_return() {
+    // Only run this script if the customer lands on the WooCommerce order-received page with a gateway reference
+    if ( is_wc_endpoint_url( 'order-received' ) && isset($_GET['ref']) ) {
+        global $wp;
+        $order_id = absint( $wp->query_vars['order-received'] );
+        $order    = wc_get_order( $order_id );
+        
+        // Skip if the order is missing or already marked as paid
+        if ( ! $order || $order->is_paid() ) {
+            return;
+        }
+
+        $reference = sanitize_text_field($_GET['ref']);
+        
+        // Ask the main website to verify the payment status
+        $main_site_url = 'https://staging3.thecyclehub.com'; 
+        $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
+
+        $response = wp_remote_post( $endpoint, array(
+            'headers' => array(
+                'Content-Type'   => 'application/json',
+                'x-bistro-token' => BISTRO_BRIDGE_SECRET
+            ),
+            'body'    => wp_json_encode( array('reference' => $reference) ),
+            'timeout' => 15,
+        ));
+
+        if ( ! is_wp_error( $response ) ) {
+            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+            
+            if ( isset($body['success']) && $body['success'] === true ) {
+                $state = $body['state'];
+                
+                if ( $state === 'CAPTURED' || $state === 'AUTHORISED' ) {
+                    // Payment successful! Mark order as processing
+                    $order->payment_complete( $reference );
+                    $order->add_order_note('Payment successfully captured via N-Genius Bridge. Reference: ' . $reference);
+                } else {
+                    // Payment failed or declined
+                    $order->update_status('failed', 'Payment failed or declined via N-Genius Bridge. State: ' . $state);
+                }
+            }
+        }
+    }
 }
 // END OF FILE
