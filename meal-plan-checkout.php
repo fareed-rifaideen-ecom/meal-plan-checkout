@@ -1042,12 +1042,26 @@ function mpc_verify_ngenius_payment_return() {
 // ==========================================
 add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
 function cmp_add_cleanup_tool_menu() {
-    add_management_page(
-        'Meal Plan Database Cleanup', 
-        'Meal Plan Cleanup',          
-        'manage_options',             
-        'cmp-db-cleanup',             
-        'cmp_render_cleanup_page'     
+    
+    // 1. Create the Top-Level Menu "Meal Portal"
+    add_menu_page(
+        'Meal Portal Settings',       // Page title
+        'Meal Portal',                // Menu title on the sidebar
+        'manage_options',             // Capability required (Admins only)
+        'meal-portal-main',           // Main Menu slug
+        'cmp_render_cleanup_page',    // Function to render the page
+        'dashicons-food',             // Food icon (fork and knife)
+        58                            // Position (places it safely down the sidebar)
+    );
+
+    // 2. Rename the default first submenu item to "Meal Plan Cleanup"
+    add_submenu_page(
+        'meal-portal-main',           // Parent slug (must match the Top-Level slug)
+        'Meal Plan Database Cleanup', // Page title
+        'Meal Plan Cleanup',          // Sub-menu title
+        'manage_options',             // Capability required
+        'meal-portal-main',           // Menu slug (matching parent overrides the default name)
+        'cmp_render_cleanup_page'     // Function to render the page
     );
 }
 
