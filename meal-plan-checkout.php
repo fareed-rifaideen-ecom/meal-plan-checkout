@@ -1046,7 +1046,7 @@ function cmp_add_cleanup_tool_menu() {
     // 1. Create the Top-Level Menu "Meal Portal"
     add_menu_page(
         'Meal Portal Settings',       // Page title
-        'Meal Portal',                // Menu title on the sidebar
+        'Meal Plan Cleanup',          // Menu title on the sidebar
         'manage_options',             // Capability required (Admins only)
         'meal-portal-main',           // Main Menu slug
         'cmp_render_cleanup_page',    // Function to render the page
