@@ -1037,4 +1037,102 @@ function mpc_verify_ngenius_payment_return() {
         }
     }
 }
+// ==========================================
+// 8. ADMIN DASHBOARD: DATABASE CLEANUP TOOL
+// ==========================================
+add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
+function cmp_add_cleanup_tool_menu() {
+    add_management_page(
+        'Meal Plan Database Cleanup', 
+        'Meal Plan Cleanup',          
+        'manage_options',             
+        'cmp-db-cleanup',             
+        'cmp_render_cleanup_page'     
+    );
+}
+
+function cmp_render_cleanup_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'You do not have sufficient permissions to access this page.' );
+    }
+
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $message = '';
+
+    if ( isset( $_POST['cmp_run_cleanup'] ) && check_admin_referer( 'cmp_cleanup_action', 'cmp_cleanup_nonce' ) ) {
+        
+        $days_old = intval( $_POST['days_old'] );
+        $confirm  = isset( $_POST['confirm_delete'] ) ? true : false;
+
+        if ( $days_old < 30 ) {
+            $message = '<div class="notice notice-error"><p><strong>Error:</strong> For safety, you cannot delete plans that expired less than 30 days ago.</p></div>';
+        } elseif ( ! $confirm ) {
+            $message = '<div class="notice notice-error"><p><strong>Error:</strong> You must check the confirmation box to proceed.</p></div>';
+        } else {
+            $cutoff_date = date( 'Y-m-d H:i:s', strtotime( "-$days_old days" ) );
+
+            $subs_to_delete = $wpdb->get_col( $wpdb->prepare(
+                "SELECT id FROM $table_subs WHERE expiry_date < %s",
+                $cutoff_date
+            ));
+
+            if ( empty( $subs_to_delete ) ) {
+                $message = '<div class="notice notice-info"><p>No subscriptions found that expired more than ' . $days_old . ' days ago. Your database is clean!</p></div>';
+            } else {
+                $ids_list = implode( ',', array_map( 'intval', $subs_to_delete ) );
+                $logs_deleted = $wpdb->query( "DELETE FROM $table_logs WHERE subscription_id IN ($ids_list)" );
+                $subs_deleted = $wpdb->query( "DELETE FROM $table_subs WHERE id IN ($ids_list)" );
+
+                $message = '<div class="notice notice-success"><p><strong>Success!</strong> Cleaned up <strong>' . intval($subs_deleted) . '</strong> old subscriptions and <strong>' . intval($logs_deleted) . '</strong> associated meal logs that expired before ' . date('M j, Y', strtotime($cutoff_date)) . '.</p></div>';
+            }
+        }
+    }
+    ?>
+    <div class="wrap">
+        <h1 style="margin-bottom: 20px;">Meal Plan Database Cleanup</h1>
+        
+        <?php echo $message; ?>
+
+        <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; border-radius: 4px; max-width: 700px; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
+            <h2 style="margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px;">Purge Old Subscription Data</h2>
+            <p>Use this tool to permanently delete old meal plan subscriptions and their daily meal logs. <strong>Customer accounts, passwords, and billing addresses will NOT be deleted.</strong></p>
+            
+            <form method="POST" action="">
+                <?php wp_nonce_field( 'cmp_cleanup_action', 'cmp_cleanup_nonce' ); ?>
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><label for="days_old">Target Timeframe:</label></th>
+                        <td>
+                            Delete all plans that <strong>expired more than</strong> 
+                            <input type="number" name="days_old" id="days_old" value="90" min="30" max="3650" style="width: 80px;"> 
+                            <strong>days ago.</strong>
+                            <p class="description">Minimum 30 days. Example: Entering '90' will delete plans that ended 3 months ago.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Confirm Deletion:</th>
+                        <td>
+                            <label style="color: #dc3232; font-weight: bold;">
+                                <input type="checkbox" name="confirm_delete" value="1" required>
+                                I understand that this action is irreversible and will permanently delete this data.
+                            </label>
+                        </td>
+                    </tr>
+                </table>
+                
+                <p class="submit">
+                    <button type="submit" name="cmp_run_cleanup" class="button button-primary" style="background: #dc3232; border-color: #dc3232;">Permanently Delete Old Records</button>
+                </p>
+            </form>
+        </div>
+        
+        <div style="margin-top: 20px; max-width: 700px; padding: 15px; background: #e5f5fa; border-left: 4px solid #00a0d2;">
+            <strong>Pro Tip:</strong> It is highly recommended to run a full database backup via your web host before performing bulk deletions.
+        </div>
+    </div>
+    <?php
+}
 // END OF FILE
