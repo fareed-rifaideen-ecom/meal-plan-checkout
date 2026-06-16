@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
- * Version: 2.9
+ * Version: 3.0
  * Author: FMR.
  */
 
@@ -17,13 +17,26 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version = file_exists($css_file) ? filemtime($css_file) : '2.9';
+        $version = file_exists($css_file) ? filemtime($css_file) : '3.0';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
 
 // ==========================================
-// 2. AJAX HANDLER: SECURE USER LOGIN
+// 2. AJAX HANDLER: FRESH NONCE (Cache-Safe)
+// ==========================================
+// FIX v3.0: The page HTML is cached by LiteSpeed/Cloudflare, which means the
+// wp_create_nonce() baked into the page JS becomes stale and WordPress returns -1.
+// This endpoint is NOT cached (admin-ajax.php is always dynamic) and returns
+// a guaranteed fresh nonce for the current visitor session.
+add_action('wp_ajax_nopriv_mpc_get_nonce', 'mpc_get_fresh_nonce');
+add_action('wp_ajax_mpc_get_nonce', 'mpc_get_fresh_nonce');
+function mpc_get_fresh_nonce() {
+    wp_send_json_success( array( 'nonce' => wp_create_nonce( 'mpc_checkout_nonce' ) ) );
+}
+
+// ==========================================
+// 3. AJAX HANDLER: SECURE USER LOGIN
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
 function mpc_ajax_login() {
@@ -52,9 +65,7 @@ function mpc_ajax_login() {
             'delivery_timing' => get_user_meta($user_id, 'delivery_timing', true),
             'time_slot'       => get_user_meta($user_id, 'time_slot', true),
             'pickup_location' => get_user_meta($user_id, 'pickup_location', true),
-            // FIX v2.9: Return a fresh nonce generated for the now-authenticated session.
-            // The page was rendered as a guest (user_id=0), so the baked nonce is invalid
-            // after login. mpcSubmitOrder() will use this fresh nonce instead.
+            // Return a fresh nonce for the now-authenticated session
             'new_nonce'       => wp_create_nonce( 'mpc_checkout_nonce' ),
         );
         wp_send_json_success($data);
@@ -62,7 +73,7 @@ function mpc_ajax_login() {
 }
 
 // ==========================================
-// 3. AJAX HANDLER: ORDER PROCESSING
+// 4. AJAX HANDLER: ORDER PROCESSING
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_process_order', 'mpc_process_order');
 add_action('wp_ajax_mpc_process_order', 'mpc_process_order');
@@ -199,13 +210,16 @@ function mpc_process_order() {
         wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
     }
 
-    $body = json_decode( wp_remote_retrieve_body( $response ), true );
+    $raw_body = wp_remote_retrieve_body( $response );
+    $body     = json_decode( $raw_body, true );
+
+    if ( ! is_array( $body ) ) {
+        wp_send_json_error( 'Gateway Error: Invalid response from payment bridge. Raw: ' . substr( $raw_body, 0, 200 ) );
+    }
 
     if ( isset( $body['success'] ) && $body['success'] === true ) {
-        // Save the N-Genius reference to the local order
         $order->update_meta_data( '_ngenius_reference', sanitize_text_field( $body['reference'] ) );
         $order->save();
-        
         wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
     } else {
         $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
@@ -215,7 +229,7 @@ function mpc_process_order() {
 }
 
 // ==========================================
-// 4. FRONTEND WIZARD RENDERER
+// 5. FRONTEND WIZARD RENDERER
 // ==========================================
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
@@ -498,11 +512,21 @@ function mpc_render_checkout_wizard() {
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
 
-        // FIX v2.9: Holds the fresh nonce returned after in-wizard AJAX login.
-        // When a guest logs in mid-session, WordPress invalidates the page-baked nonce
-        // because the session user changes from 0 to an authenticated user ID.
-        // mpcSubmitOrder() will prefer this value over the stale baked nonce.
+        // FIX v3.0: _mpcFreshNonce is populated immediately on page load via a live
+        // AJAX call to admin-ajax.php (which is never cached). This replaces the
+        // stale baked nonce that caused WordPress to return -1 on cached pages.
         let _mpcFreshNonce = null;
+
+        fetch('<?php echo admin_url("admin-ajax.php"); ?>', {
+            method: 'POST',
+            body: new URLSearchParams({ action: 'mpc_get_nonce' })
+        })
+        .then(res => res.json())
+        .then(response => {
+            if (response.success && response.data.nonce) {
+                _mpcFreshNonce = response.data.nonce;
+            }
+        });
 
         document.getElementById('mpc_toggle_password').addEventListener('click', function(e) {
             e.preventDefault();
@@ -583,7 +607,7 @@ function mpc_render_checkout_wizard() {
                 
                 let formData = new URLSearchParams();
                 formData.append('action', 'mpc_login_user');
-                formData.append('nonce', '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
+                formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
                 formData.append('log', log);
                 formData.append('pwd', pwd);
                 
@@ -593,8 +617,7 @@ function mpc_render_checkout_wizard() {
                     if(response.success) {
                         isUserLoggedIn = true;
 
-                        // FIX v2.9: Capture the fresh nonce from the login response.
-                        // This replaces the guest-session nonce for all subsequent AJAX calls.
+                        // After login, capture the new nonce for the authenticated session
                         if (response.data.new_nonce) {
                             _mpcFreshNonce = response.data.new_nonce;
                         }
@@ -718,16 +741,12 @@ function mpc_render_checkout_wizard() {
             }
             updateLogisticsSummary();
 
-            // BULLETPROOF SCROLL: Calculates exact pixel position and scrolls safely
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
                 if (nextBtn) {
                     let elementPosition = nextBtn.getBoundingClientRect().top + window.scrollY;
                     let offsetPosition = elementPosition - 150;
-                    window.scrollTo({
-                        top: offsetPosition,
-                        behavior: 'smooth'
-                    });
+                    window.scrollTo({ top: offsetPosition, behavior: 'smooth' });
                 }
             }, 250); 
         }
@@ -853,9 +872,7 @@ function mpc_render_checkout_wizard() {
             btn.innerText = 'Redirecting to Checkout...';
             btn.disabled = true;
 
-            // FIX v2.9: Use the fresh nonce captured after in-wizard login if available.
-            // Falls back to the page-baked nonce for users who were already logged in
-            // or who are checking out as a new guest (no login step occurred).
+            // Always use the live fetched nonce — never the stale baked one
             let activeNonce = _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>';
 
             let formData = new URLSearchParams();
@@ -885,13 +902,13 @@ function mpc_render_checkout_wizard() {
                     localStorage.removeItem('mpcCheckoutState'); 
                     window.location.href = response.data.payment_url;
                 } else {
-                    alert('Error: ' + response.data);
+                    alert('Error: ' + (response.data || 'Unknown error. Please contact support.'));
                     btn.innerText = 'Proceed to Checkout \u2192';
                     btn.disabled = false;
                 }
             })
             .catch(error => {
-                alert('An unexpected error occurred. Please try again.');
+                alert('Error: ' + (error.message || 'An unexpected error occurred. Please try again.'));
                 btn.innerText = 'Proceed to Checkout \u2192';
                 btn.disabled = false;
             });
@@ -905,7 +922,7 @@ function mpc_render_checkout_wizard() {
 }
 
 // ==========================================
-// 5. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
+// 6. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
 // ==========================================
 add_action( 'woocommerce_order_status_processing', 'mpc_activate_subscription_on_payment', 10, 1 );
 add_action( 'woocommerce_order_status_completed', 'mpc_activate_subscription_on_payment', 10, 1 );
@@ -934,7 +951,7 @@ function mpc_change_pay_button_text( $text ) {
 }
 
 // ==========================================
-// 6. CUSTOMER DASHBOARD PROFILE WIDGET
+// 7. CUSTOMER DASHBOARD PROFILE WIDGET
 // ==========================================
 add_shortcode( 'meal_plan_customer_profile', 'mpc_render_customer_profile' );
 
@@ -995,7 +1012,7 @@ function mpc_render_customer_profile() {
 }
 
 // ==========================================
-// 7. PAYMENT VERIFICATION BRIDGE
+// 8. PAYMENT VERIFICATION BRIDGE
 // ==========================================
 add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
 function mpc_verify_ngenius_payment_return() {
@@ -1046,7 +1063,7 @@ function mpc_verify_ngenius_payment_return() {
     }
 }
 // ==========================================
-// 8. ADMIN DASHBOARD: DATABASE CLEANUP TOOL
+// 9. ADMIN DASHBOARD: DATABASE CLEANUP TOOL
 // ==========================================
 add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
 function cmp_add_cleanup_tool_menu() {
