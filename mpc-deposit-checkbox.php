@@ -7,7 +7,7 @@
  *              without modifying meal-plan-checkout.php.
  *              Unchecked orders are flagged with an order note for FOH follow-up.
  * Version:     1.0
- * Author:      FMR
+ * Author:      Fareed M Rifaideen
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
