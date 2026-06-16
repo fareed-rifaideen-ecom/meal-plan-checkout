@@ -5,7 +5,7 @@
  *              thermal bag deposit for first-time PAID subscribers only. Excludes pending/
  *              abandoned checkout rows. Does not modify the Meal Plan Custom Checkout plugin.
  * Version:     1.1
- * Author:      FMR
+ * Author:      Fareed M Rifaideen
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
