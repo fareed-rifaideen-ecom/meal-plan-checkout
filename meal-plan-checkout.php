@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
- * Version: 2.8
- * Author: RM Dev Team | Customised by Fareed M Rifaideen
+ * Version: 2.9
+ * Author: FMR.
  */
 
 // Prevent direct file access
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version = file_exists($css_file) ? filemtime($css_file) : '2.8';
+        $version = file_exists($css_file) ? filemtime($css_file) : '2.9';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -51,7 +51,11 @@ function mpc_ajax_login() {
             'delivery_method' => get_user_meta($user_id, 'delivery_method', true),
             'delivery_timing' => get_user_meta($user_id, 'delivery_timing', true),
             'time_slot'       => get_user_meta($user_id, 'time_slot', true),
-            'pickup_location' => get_user_meta($user_id, 'pickup_location', true)
+            'pickup_location' => get_user_meta($user_id, 'pickup_location', true),
+            // FIX v2.9: Return a fresh nonce generated for the now-authenticated session.
+            // The page was rendered as a guest (user_id=0), so the baked nonce is invalid
+            // after login. mpcSubmitOrder() will use this fresh nonce instead.
+            'new_nonce'       => wp_create_nonce( 'mpc_checkout_nonce' ),
         );
         wp_send_json_success($data);
     }
@@ -494,6 +498,12 @@ function mpc_render_checkout_wizard() {
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
 
+        // FIX v2.9: Holds the fresh nonce returned after in-wizard AJAX login.
+        // When a guest logs in mid-session, WordPress invalidates the page-baked nonce
+        // because the session user changes from 0 to an authenticated user ID.
+        // mpcSubmitOrder() will prefer this value over the stale baked nonce.
+        let _mpcFreshNonce = null;
+
         document.getElementById('mpc_toggle_password').addEventListener('click', function(e) {
             e.preventDefault();
             let pwdInput = document.getElementById('mpc_password');
@@ -582,6 +592,13 @@ function mpc_render_checkout_wizard() {
                 .then(response => {
                     if(response.success) {
                         isUserLoggedIn = true;
+
+                        // FIX v2.9: Capture the fresh nonce from the login response.
+                        // This replaces the guest-session nonce for all subsequent AJAX calls.
+                        if (response.data.new_nonce) {
+                            _mpcFreshNonce = response.data.new_nonce;
+                        }
+
                         document.getElementById('mpc_password_group').style.display = 'none';
                         
                         let welcomeHTML = '<div style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">';
@@ -705,13 +722,8 @@ function mpc_render_checkout_wizard() {
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
                 if (nextBtn) {
-                    // 1. Get the exact Y position of the button on the page
                     let elementPosition = nextBtn.getBoundingClientRect().top + window.scrollY;
-                    
-                    // 2. Subtract 150 pixels to account for sticky headers and give breathing room
                     let offsetPosition = elementPosition - 150;
-
-                    // 3. Command the window to scroll to that exact pixel
                     window.scrollTo({
                         top: offsetPosition,
                         behavior: 'smooth'
@@ -841,9 +853,14 @@ function mpc_render_checkout_wizard() {
             btn.innerText = 'Redirecting to Checkout...';
             btn.disabled = true;
 
+            // FIX v2.9: Use the fresh nonce captured after in-wizard login if available.
+            // Falls back to the page-baked nonce for users who were already logged in
+            // or who are checking out as a new guest (no login step occurred).
+            let activeNonce = _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>';
+
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_process_order');
-            formData.append('nonce', '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
+            formData.append('nonce', activeNonce);
             formData.append('product_id', checkoutData.productId);
             formData.append('first_name', document.getElementById('mpc_first_name').value);
             formData.append('last_name', document.getElementById('mpc_last_name').value);
@@ -943,7 +960,6 @@ function mpc_render_customer_profile() {
 
     $allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
     
-    // VISUAL FALLBACKS FOR OLD ORDERS
     $method_display = $method ?: 'N/A';
     if ($method === 'Pickup' && !empty($pickup)) {
         $method_display .= ' (' . esc_html($pickup) . ')';
@@ -983,20 +999,17 @@ function mpc_render_customer_profile() {
 // ==========================================
 add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
 function mpc_verify_ngenius_payment_return() {
-    // Only run this script if the customer lands on the WooCommerce order-received page with a gateway reference
     if ( is_wc_endpoint_url( 'order-received' ) && isset($_GET['ref']) ) {
         global $wp;
         $order_id = absint( $wp->query_vars['order-received'] );
         $order    = wc_get_order( $order_id );
         
-        // Skip if the order is missing or already marked as paid
         if ( ! $order || $order->is_paid() ) {
             return;
         }
 
         $reference = sanitize_text_field($_GET['ref']);
         
-        // Ask the main website to verify the payment status
         $main_site_url = 'https://thecyclehub.com'; 
         $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
 
@@ -1009,7 +1022,6 @@ function mpc_verify_ngenius_payment_return() {
             'timeout' => 20,
         ));
 
-        // If the server physically blocks the request (e.g., Firewall, SSL error)
         if ( is_wp_error( $response ) ) {
             $order->add_order_note('Bridge Error: Server failed to connect to main website. ' . $response->get_error_message());
             return;
@@ -1021,17 +1033,13 @@ function mpc_verify_ngenius_payment_return() {
         if ( $response_code === 200 && isset($body['success']) && $body['success'] === true ) {
             $state = $body['state'];
             
-            // Allow all known N-Genius success states
             if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {
-                // Payment successful! Mark order as processing
                 $order->payment_complete( $reference );
                 $order->add_order_note('Payment successfully captured via N-Genius Bridge. State: ' . $state . ' | Reference: ' . $reference);
             } else {
-                // Payment failed or declined
                 $order->update_status('failed', 'Payment failed or declined via N-Genius Bridge. State: ' . $state);
             }
         } else {
-            // Log any API rejection messages from the main website
             $error_msg = isset($body['message']) ? $body['message'] : 'HTTP Status Code ' . $response_code;
             $order->add_order_note('Bridge Verification Failed: ' . $error_msg);
         }
@@ -1043,25 +1051,23 @@ function mpc_verify_ngenius_payment_return() {
 add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
 function cmp_add_cleanup_tool_menu() {
     
-    // 1. Create the Top-Level Menu "Meal Portal"
     add_menu_page(
-        'Meal Portal Settings',       // Page title
-        'Plan Cleanup',               // Menu title on the sidebar
-        'manage_options',             // Capability required (Admins only)
-        'meal-portal-main',           // Main Menu slug
-        'cmp_render_cleanup_page',    // Function to render the page
-        'dashicons-food',             // Food icon (fork and knife)
-        58                            // Position (places it safely down the sidebar)
+        'Meal Portal Settings',
+        'Plan Cleanup',
+        'manage_options',
+        'meal-portal-main',
+        'cmp_render_cleanup_page',
+        'dashicons-food',
+        58
     );
 
-    // 2. Rename the default first submenu item to "Meal Plan Cleanup"
     add_submenu_page(
-        'meal-portal-main',           // Parent slug (must match the Top-Level slug)
-        'Meal Plan Database Cleanup', // Page title
-        'Meal Plan Cleanup',          // Sub-menu title
-        'manage_options',             // Capability required
-        'meal-portal-main',           // Menu slug (matching parent overrides the default name)
-        'cmp_render_cleanup_page'     // Function to render the page
+        'meal-portal-main',
+        'Meal Plan Database Cleanup',
+        'Meal Plan Cleanup',
+        'manage_options',
+        'meal-portal-main',
+        'cmp_render_cleanup_page'
     );
 }
 
