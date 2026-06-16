@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, and direct payment routing.
- * Version: 2.8
- * Author: RM Dev Team | Customised by Fareed M Rifaideen
+ * Version: 2.9
+ * Author: FMR
  */
 
 // Prevent direct file access
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version = file_exists($css_file) ? filemtime($css_file) : '2.8';
+        $version = file_exists($css_file) ? filemtime($css_file) : '2.9';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -149,6 +149,18 @@ function mpc_process_order() {
 
     $order->calculate_totals();
     $order->save();
+
+    // -------------------------------------------------------
+    // FIX v2.9: Re-fetch the order from the database after
+    // save() to guarantee that any fee items added during the
+    // woocommerce_before_calculate_totals hook (e.g. the AED 150
+    // thermal bag deposit from mpc-thermal-bag-deposit.php) are
+    // fully reflected in get_total(). Without this, the in-memory
+    // $order object can return a stale total that does not include
+    // fees added by companion plugins, causing the wrong amount
+    // to be sent to the N-Genius payment bridge.
+    // -------------------------------------------------------
+    $order = wc_get_order( $order->get_id() );
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -701,17 +713,11 @@ function mpc_render_checkout_wizard() {
             }
             updateLogisticsSummary();
 
-            // BULLETPROOF SCROLL: Calculates exact pixel position and scrolls safely
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
                 if (nextBtn) {
-                    // 1. Get the exact Y position of the button on the page
                     let elementPosition = nextBtn.getBoundingClientRect().top + window.scrollY;
-                    
-                    // 2. Subtract 150 pixels to account for sticky headers and give breathing room
                     let offsetPosition = elementPosition - 150;
-
-                    // 3. Command the window to scroll to that exact pixel
                     window.scrollTo({
                         top: offsetPosition,
                         behavior: 'smooth'
@@ -943,7 +949,6 @@ function mpc_render_customer_profile() {
 
     $allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
     
-    // VISUAL FALLBACKS FOR OLD ORDERS
     $method_display = $method ?: 'N/A';
     if ($method === 'Pickup' && !empty($pickup)) {
         $method_display .= ' (' . esc_html($pickup) . ')';
@@ -983,20 +988,17 @@ function mpc_render_customer_profile() {
 // ==========================================
 add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
 function mpc_verify_ngenius_payment_return() {
-    // Only run this script if the customer lands on the WooCommerce order-received page with a gateway reference
     if ( is_wc_endpoint_url( 'order-received' ) && isset($_GET['ref']) ) {
         global $wp;
         $order_id = absint( $wp->query_vars['order-received'] );
         $order    = wc_get_order( $order_id );
         
-        // Skip if the order is missing or already marked as paid
         if ( ! $order || $order->is_paid() ) {
             return;
         }
 
         $reference = sanitize_text_field($_GET['ref']);
         
-        // Ask the main website to verify the payment status
         $main_site_url = 'https://thecyclehub.com'; 
         $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
 
@@ -1009,7 +1011,6 @@ function mpc_verify_ngenius_payment_return() {
             'timeout' => 20,
         ));
 
-        // If the server physically blocks the request (e.g., Firewall, SSL error)
         if ( is_wp_error( $response ) ) {
             $order->add_order_note('Bridge Error: Server failed to connect to main website. ' . $response->get_error_message());
             return;
@@ -1021,17 +1022,13 @@ function mpc_verify_ngenius_payment_return() {
         if ( $response_code === 200 && isset($body['success']) && $body['success'] === true ) {
             $state = $body['state'];
             
-            // Allow all known N-Genius success states
             if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {
-                // Payment successful! Mark order as processing
                 $order->payment_complete( $reference );
                 $order->add_order_note('Payment successfully captured via N-Genius Bridge. State: ' . $state . ' | Reference: ' . $reference);
             } else {
-                // Payment failed or declined
                 $order->update_status('failed', 'Payment failed or declined via N-Genius Bridge. State: ' . $state);
             }
         } else {
-            // Log any API rejection messages from the main website
             $error_msg = isset($body['message']) ? $body['message'] : 'HTTP Status Code ' . $response_code;
             $order->add_order_note('Bridge Verification Failed: ' . $error_msg);
         }
@@ -1043,25 +1040,23 @@ function mpc_verify_ngenius_payment_return() {
 add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
 function cmp_add_cleanup_tool_menu() {
     
-    // 1. Create the Top-Level Menu "Meal Portal"
     add_menu_page(
-        'Meal Portal Settings',       // Page title
-        'Plan Cleanup',               // Menu title on the sidebar
-        'manage_options',             // Capability required (Admins only)
-        'meal-portal-main',           // Main Menu slug
-        'cmp_render_cleanup_page',    // Function to render the page
-        'dashicons-food',             // Food icon (fork and knife)
-        58                            // Position (places it safely down the sidebar)
+        'Meal Portal Settings',
+        'Plan Cleanup',
+        'manage_options',
+        'meal-portal-main',
+        'cmp_render_cleanup_page',
+        'dashicons-food',
+        58
     );
 
-    // 2. Rename the default first submenu item to "Meal Plan Cleanup"
     add_submenu_page(
-        'meal-portal-main',           // Parent slug (must match the Top-Level slug)
-        'Meal Plan Database Cleanup', // Page title
-        'Meal Plan Cleanup',          // Sub-menu title
-        'manage_options',             // Capability required
-        'meal-portal-main',           // Menu slug (matching parent overrides the default name)
-        'cmp_render_cleanup_page'     // Function to render the page
+        'meal-portal-main',
+        'Meal Plan Database Cleanup',
+        'Meal Plan Cleanup',
+        'manage_options',
+        'meal-portal-main',
+        'cmp_render_cleanup_page'
     );
 }
 
