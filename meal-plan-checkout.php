@@ -2,23 +2,12 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
- * Version: 3.1
- * Author: RM Dev Team | Customised by Fareed M Rifaideen
+ * Version: 3.2
+ * Author: FMR
  */
 
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
-
-// Whitelisted coupon codes and their discount percentages.
-// Admin creates these in WooCommerce → Coupons.
-// RENEW2/3/4: set usage limit per user = 1 in WC to prevent reuse.
-// TCH10: open, unlimited usage.
-define( 'MPC_COUPON_WHITELIST', array(
-    'RENEW2' => array( 'percent' => 5,  'label' => '2nd Renewal Discount (5%)' ),
-    'RENEW3' => array( 'percent' => 10, 'label' => '3rd Renewal Discount (10%)' ),
-    'RENEW4' => array( 'percent' => 15, 'label' => '4th Renewal Discount (15%)' ),
-    'TCH10'  => array( 'percent' => 10, 'label' => 'TCH Customer Discount (10%)' ),
-) );
 
 // ==========================================
 // 1. ENQUEUE SCRIPTS & STYLES
@@ -28,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.1';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.2';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -43,7 +32,7 @@ function mpc_get_fresh_nonce() {
 }
 
 // ==========================================
-// 3. AJAX: COUPON VALIDATION
+// 3. AJAX: COUPON VALIDATION (v3.2 - WC-native, no whitelist)
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_validate_coupon', 'mpc_ajax_validate_coupon');
 add_action('wp_ajax_mpc_validate_coupon',        'mpc_ajax_validate_coupon');
@@ -52,24 +41,29 @@ function mpc_ajax_validate_coupon() {
 
     $code = strtoupper( sanitize_text_field( $_POST['coupon_code'] ) );
 
-    // 1. Must be in our whitelist
-    if ( ! array_key_exists( $code, MPC_COUPON_WHITELIST ) ) {
+    if ( empty( $code ) ) {
+        wp_send_json_error( 'Please enter a coupon code.' );
+    }
+
+    // 1. Must exist as an active WooCommerce coupon
+    $coupon = new WC_Coupon( $code );
+    if ( ! $coupon->get_id() ) {
         wp_send_json_error( 'Invalid coupon code.' );
     }
 
-    // 2. Must exist and be active in WooCommerce
-    $coupon = new WC_Coupon( $code );
-    if ( ! $coupon->get_id() ) {
-        wp_send_json_error( 'This coupon code does not exist.' );
-    }
-
-    // 3. Must not be expired
+    // 2. Must not be expired
     $expiry = $coupon->get_date_expires();
     if ( $expiry && $expiry->getTimestamp() < time() ) {
         wp_send_json_error( 'This coupon has expired.' );
     }
 
-    // 4. Check usage limit per user (requires email — we check loosely here; hard check happens server-side at order)
+    // 3. Check global usage limit
+    $usage_limit = $coupon->get_usage_limit();
+    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) {
+        wp_send_json_error( 'This coupon has reached its usage limit.' );
+    }
+
+    // 4. Check per-user usage limit (logged-in users only; hard check at order time for guests)
     $usage_limit_per_user = $coupon->get_usage_limit_per_user();
     if ( $usage_limit_per_user > 0 && is_user_logged_in() ) {
         $used_by   = $coupon->get_used_by();
@@ -80,11 +74,26 @@ function mpc_ajax_validate_coupon() {
         }
     }
 
-    $data = MPC_COUPON_WHITELIST[ $code ];
+    // 5. Only support percent and fixed_cart types
+    $discount_type = $coupon->get_discount_type();
+    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) {
+        wp_send_json_error( 'This coupon type is not supported.' );
+    }
+
+    // 6. Label: use WC coupon description; auto-generate fallback if empty
+    $label = trim( $coupon->get_description() );
+    if ( empty( $label ) ) {
+        $amount_display = ( $discount_type === 'percent' )
+            ? $coupon->get_amount() . '% Off'
+            : 'AED ' . number_format( (float) $coupon->get_amount(), 2 ) . ' Off';
+        $label = ucwords( strtolower( $code ) ) . ' - ' . $amount_display;
+    }
+
     wp_send_json_success( array(
-        'code'    => $code,
-        'percent' => $data['percent'],
-        'label'   => $data['label'],
+        'code'         => $code,
+        'discountType' => $discount_type,
+        'amount'       => (float) $coupon->get_amount(),
+        'label'        => $label,
     ) );
 }
 
@@ -166,28 +175,29 @@ function mpc_process_order() {
         $categories[] = 'Snacks';
     }
 
-    // ---- SERVER-SIDE COUPON VALIDATION ----
-    // Never trust the client-calculated discount. Re-validate here.
-    $discount_percent = 0;
-    $discount_label   = '';
-    $coupon_used      = '';
+    // ---- SERVER-SIDE COUPON VALIDATION (v3.2 - WC-native) ----
+    $discount_type   = '';
+    $discount_label  = '';
+    $coupon_used     = '';
 
     if ( ! empty( $coupon_code_raw ) ) {
-        if ( array_key_exists( $coupon_code_raw, MPC_COUPON_WHITELIST ) ) {
-            $wc_coupon = new WC_Coupon( $coupon_code_raw );
-            if ( $wc_coupon->get_id() ) {
-                $expiry = $wc_coupon->get_date_expires();
-                $is_expired = $expiry && $expiry->getTimestamp() < time();
+        $wc_coupon = new WC_Coupon( $coupon_code_raw );
+        if ( $wc_coupon->get_id() ) {
+            $expiry        = $wc_coupon->get_date_expires();
+            $is_expired    = $expiry && $expiry->getTimestamp() < time();
+            $usage_limit   = $wc_coupon->get_usage_limit();
+            $usage_maxed   = ( $usage_limit > 0 && $wc_coupon->get_usage_count() >= $usage_limit );
+            $d_type        = $wc_coupon->get_discount_type();
+            $is_supported  = in_array( $d_type, array( 'percent', 'fixed_cart' ), true );
 
-                if ( ! $is_expired ) {
-                    $discount_percent = MPC_COUPON_WHITELIST[ $coupon_code_raw ]['percent'];
-                    $discount_label   = MPC_COUPON_WHITELIST[ $coupon_code_raw ]['label'];
-                    $coupon_used      = $coupon_code_raw;
-                }
+            if ( ! $is_expired && ! $usage_maxed && $is_supported ) {
+                $discount_type  = $d_type;
+                $coupon_used    = $coupon_code_raw;
+                $label_raw      = trim( $wc_coupon->get_description() );
+                $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
             }
         }
-        // Silent fail — if coupon is invalid server-side, order proceeds at full price.
-        // We do NOT block the order; we simply don't apply the discount.
+        // Silent fail - invalid coupon means order proceeds at full price.
     }
     // ---- END COUPON VALIDATION ----
 
@@ -231,33 +241,40 @@ function mpc_process_order() {
     $order->set_address($address, 'shipping');
     $order->set_customer_note($allergies);
 
-    $order->update_meta_data('delivery_method',       $delivery_method);
-    $order->update_meta_data('delivery_timing',       $delivery_timing);
-    $order->update_meta_data('time_slot',             $time_slot);
-    $order->update_meta_data('pickup_location',       $pickup_location);
-    $order->update_meta_data('allergies',             $allergies);
-    $order->update_meta_data('_cmp_allowed_categories', implode(',', $categories));
+    $order->update_meta_data('delivery_method',          $delivery_method);
+    $order->update_meta_data('delivery_timing',          $delivery_timing);
+    $order->update_meta_data('time_slot',                $time_slot);
+    $order->update_meta_data('pickup_location',          $pickup_location);
+    $order->update_meta_data('allergies',                $allergies);
+    $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
 
-    // Apply discount as a negative fee line item so it shows in WC order, admin, and emails
-    if ( $discount_percent > 0 ) {
+    // Apply discount as a negative fee line item
+    if ( ! empty( $coupon_used ) ) {
         $order->calculate_totals();
         $subtotal        = $order->get_subtotal();
-        $discount_amount = round( $subtotal * ( $discount_percent / 100 ), 2 );
+        $wc_coupon_obj   = new WC_Coupon( $coupon_used );
+        $discount_amount = 0;
 
-        $fee       = new WC_Order_Item_Fee();
-        $fee->set_name( $discount_label . ' (' . $coupon_used . ')' );
-        $fee->set_amount( -$discount_amount );
-        $fee->set_total( -$discount_amount );
-        $fee->set_tax_status('none');
-        $order->add_item($fee);
+        if ( $discount_type === 'percent' ) {
+            $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
+        } elseif ( $discount_type === 'fixed_cart' ) {
+            $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
+        }
 
-        // Record coupon usage in WooCommerce so usage-per-user limits are honoured
-        $wc_coupon = new WC_Coupon( $coupon_used );
-        $wc_coupon->increase_usage_count( $email );
+        if ( $discount_amount > 0 ) {
+            $fee = new WC_Order_Item_Fee();
+            $fee->set_name( $discount_label . ' (' . $coupon_used . ')' );
+            $fee->set_amount( -$discount_amount );
+            $fee->set_total( -$discount_amount );
+            $fee->set_tax_status('none');
+            $order->add_item($fee);
 
-        $order->update_meta_data('_mpc_coupon_used',      $coupon_used);
-        $order->update_meta_data('_mpc_discount_percent', $discount_percent);
-        $order->update_meta_data('_mpc_discount_amount',  $discount_amount);
+            $wc_coupon_obj->increase_usage_count( $email );
+
+            $order->update_meta_data('_mpc_coupon_used',     $coupon_used);
+            $order->update_meta_data('_mpc_discount_type',   $discount_type);
+            $order->update_meta_data('_mpc_discount_amount', $discount_amount);
+        }
     }
 
     $order->calculate_totals();
@@ -284,13 +301,12 @@ function mpc_process_order() {
         'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
     ));
 
-    // Send DISCOUNTED total to payment bridge
     $main_site_url = 'https://thecyclehub.com';
     $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
 
     $payload = array(
         'order_id'   => $order->get_id(),
-        'amount'     => $order->get_total(),  // already reflects the negative fee
+        'amount'     => $order->get_total(),
         'currency'   => $order->get_currency(),
         'email'      => $email,
         'first_name' => $first_name,
@@ -345,11 +361,11 @@ function mpc_render_checkout_wizard() {
     $products = wc_get_products( $args );
 
     $grouped_plans = array(
-        '7-days'  => array('label' => '7-Day Plans',       'items' => array()),
-        '20-days' => array('label' => '20-Day Plans',      'items' => array()),
-        '24-days' => array('label' => '24-Day Plans',      'items' => array()),
-        'juice'   => array('label' => 'Cleanse Boosters',  'items' => array()),
-        'other'   => array('label' => 'Other Plans',       'items' => array()),
+        '7-days'  => array('label' => '7-Day Plans',      'items' => array()),
+        '20-days' => array('label' => '20-Day Plans',     'items' => array()),
+        '24-days' => array('label' => '24-Day Plans',     'items' => array()),
+        'juice'   => array('label' => 'Cleanse Boosters', 'items' => array()),
+        'other'   => array('label' => 'Other Plans',      'items' => array()),
     );
 
     foreach ($products as $product) {
@@ -390,12 +406,12 @@ function mpc_render_checkout_wizard() {
                         echo '<h3 class="mpc-cat-header">' . esc_html($group_data['label']) . '</h3>';
                         echo '<div class="mpc-grid">';
                         foreach ( $group_data['items'] as $product ) {
-                            $id           = $product->get_id();
-                            $title        = $product->get_name();
-                            $price_html   = $product->get_price_html();
-                            $raw_price    = $product->get_price();
-                            $desc         = $product->get_short_description();
-                            $is_juice     = (stripos($title, 'juice') !== false || stripos($title, 'cleanse') !== false) ? 'true' : 'false';
+                            $id            = $product->get_id();
+                            $title         = $product->get_name();
+                            $price_html    = $product->get_price_html();
+                            $raw_price     = $product->get_price();
+                            $desc          = $product->get_short_description();
+                            $is_juice      = (stripos($title, 'juice') !== false || stripos($title, 'cleanse') !== false) ? 'true' : 'false';
                             preg_match('/(\d+)\s*Meal/i', $title, $m);
                             $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
                             $display_title = str_replace(' - ', ' - <br>', esc_html($title));
@@ -504,7 +520,7 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-form-row">
                     <div class="mpc-form-col mpc-form-group" style="flex: unset; width: 100%;">
-                        <label>City & Country</label>
+                        <label>City &amp; Country</label>
                         <input type="text" class="mpc-form-control" value="Dubai, UAE" disabled style="background: #f8fafc; color: #94a3b8; cursor: not-allowed;">
                     </div>
                 </div>
@@ -564,7 +580,7 @@ function mpc_render_checkout_wizard() {
                 <div class="mpc-form-group" id="mpc-coupon-section">
                     <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
                     <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
-                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code (e.g. RENEW3)" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
+                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
                         <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn" style="background: #334155; color: #fff; height: 44px; padding: 0 20px; font-size: 0.9em; white-space: nowrap;">Apply Code</button>
                     </div>
                     <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
@@ -611,9 +627,12 @@ function mpc_render_checkout_wizard() {
             <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
             <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
 
-            <!-- Discount line — hidden until coupon applied -->
+            <!-- Discount card - hidden until coupon applied -->
             <div id="mpc-summary-discount" style="display: none; margin-top: 12px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; font-size: 0.9em;">
-                <span style="color: #16a34a; font-weight: bold;">🏷 <span id="sum-discount-label"></span></span><br>
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <span style="font-size: 1.1em; line-height: 1;">&#127991;</span>
+                    <span style="color: #16a34a; font-weight: bold;" id="sum-discount-label"></span>
+                </div>
                 <span style="color: #15803d;">Saving: <strong>AED <span id="sum-discount-amount"></span></strong></span><br>
                 <span style="color: #222;">You Pay: <strong>AED <span id="sum-final-price"></span></strong></span><br>
                 <a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline; display: inline-block; margin-top: 4px;">Remove</a>
@@ -631,15 +650,14 @@ function mpc_render_checkout_wizard() {
     </div>
 
     <script>
-        let currentStep   = 1;
-        let totalSteps    = 3;
-        let checkoutData  = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
+        let currentStep  = 1;
+        let totalSteps   = 3;
+        let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
 
-        // Active coupon state — single slot, no stacking
-        let appliedCoupon = { code: '', percent: 0, label: '' };
+        // v3.2: discountType ('percent'|'fixed_cart') + amount (raw WC value)
+        let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
-        // v3.0 cache-safe nonce
         let _mpcFreshNonce = null;
         fetch('<?php echo admin_url("admin-ajax.php"); ?>', {
             method: 'POST',
@@ -656,48 +674,47 @@ function mpc_render_checkout_wizard() {
         document.getElementById('mpc-apply-coupon-btn').addEventListener('click', function() {
             let code     = document.getElementById('mpc_coupon_input').value.trim().toUpperCase();
             let feedback = document.getElementById('mpc-coupon-feedback');
-
             if (!code) { feedback.style.color = '#dc2626'; feedback.innerText = 'Please enter a coupon code.'; return; }
-
-            this.innerText  = 'Checking...';
-            this.disabled   = true;
-            feedback.innerText = '';
-
+            this.innerText = 'Checking...'; this.disabled = true; feedback.innerText = '';
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_validate_coupon');
             formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
             formData.append('coupon_code', code);
-
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(response => {
                 if (response.success) {
-                    appliedCoupon = { code: response.data.code, percent: response.data.percent, label: response.data.label };
-                    feedback.style.color  = '#16a34a';
-                    feedback.innerText    = '✓ ' + response.data.label + ' applied!';
+                    appliedCoupon = {
+                        code:         response.data.code,
+                        discountType: response.data.discountType,
+                        amount:       parseFloat(response.data.amount),
+                        label:        response.data.label
+                    };
+                    feedback.style.color = '#16a34a';
+                    feedback.innerText   = '\u2713 ' + response.data.label + ' applied!';
                     document.getElementById('mpc_coupon_input').readOnly = true;
                     document.getElementById('mpc-apply-coupon-btn').style.display = 'none';
                     mpcUpdateDiscountSummary();
                     mpcSaveState();
                 } else {
-                    appliedCoupon = { code: '', percent: 0, label: '' };
-                    feedback.style.color  = '#dc2626';
-                    feedback.innerText    = '✗ ' + response.data;
+                    appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
+                    feedback.style.color = '#dc2626';
+                    feedback.innerText   = '\u2717 ' + response.data;
                 }
-                document.getElementById('mpc-apply-coupon-btn').innerText  = 'Apply Code';
-                document.getElementById('mpc-apply-coupon-btn').disabled   = false;
+                document.getElementById('mpc-apply-coupon-btn').innerText = 'Apply Code';
+                document.getElementById('mpc-apply-coupon-btn').disabled  = false;
             })
             .catch(() => {
-                feedback.style.color  = '#dc2626';
-                feedback.innerText    = 'Connection error. Please try again.';
-                document.getElementById('mpc-apply-coupon-btn').innerText  = 'Apply Code';
-                document.getElementById('mpc-apply-coupon-btn').disabled   = false;
+                feedback.style.color = '#dc2626';
+                feedback.innerText   = 'Connection error. Please try again.';
+                document.getElementById('mpc-apply-coupon-btn').innerText = 'Apply Code';
+                document.getElementById('mpc-apply-coupon-btn').disabled  = false;
             });
         });
 
         document.getElementById('mpc-remove-coupon').addEventListener('click', function(e) {
             e.preventDefault();
-            appliedCoupon = { code: '', percent: 0, label: '' };
+            appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
             document.getElementById('mpc_coupon_input').value    = '';
             document.getElementById('mpc_coupon_input').readOnly = false;
             document.getElementById('mpc-apply-coupon-btn').style.display = '';
@@ -711,20 +728,24 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc-summary-discount').style.display = 'none';
                 return;
             }
-            let price         = parseFloat(checkoutData.planPrice);
-            let discountAmt   = (price * appliedCoupon.percent / 100).toFixed(2);
-            let finalPrice    = (price - discountAmt).toFixed(2);
-
+            let price       = parseFloat(checkoutData.planPrice);
+            let discountAmt = 0;
+            if (appliedCoupon.discountType === 'percent') {
+                discountAmt = parseFloat((price * appliedCoupon.amount / 100).toFixed(2));
+            } else if (appliedCoupon.discountType === 'fixed_cart') {
+                discountAmt = parseFloat(Math.min(appliedCoupon.amount, price).toFixed(2));
+            }
+            let finalPrice = parseFloat((price - discountAmt).toFixed(2));
             document.getElementById('sum-discount-label').innerText  = appliedCoupon.label;
-            document.getElementById('sum-discount-amount').innerText = discountAmt;
-            document.getElementById('sum-final-price').innerText     = finalPrice;
+            document.getElementById('sum-discount-amount').innerText = discountAmt.toFixed(2);
+            document.getElementById('sum-final-price').innerText     = finalPrice.toFixed(2);
             document.getElementById('mpc-summary-discount').style.display = 'block';
         }
         // ---- END COUPON LOGIC ----
 
         document.getElementById('mpc_toggle_password').addEventListener('click', function(e) {
             e.preventDefault();
-            let pwdInput  = document.getElementById('mpc_password');
+            let pwdInput   = document.getElementById('mpc_password');
             let iconOpen   = document.getElementById('icon-eye-open');
             let iconClosed = document.getElementById('icon-eye-closed');
             if (pwdInput.type === 'password') {
@@ -742,9 +763,9 @@ function mpc_render_checkout_wizard() {
                 ef.value = data.email; ef.readOnly = true;
                 ef.style.background = '#f1f5f9'; ef.style.cursor = 'not-allowed';
             }
-            if(data.phone)    document.getElementById('mpc_phone').value    = data.phone;
-            if(data.address_1)document.getElementById('mpc_address_1').value= data.address_1;
-            if(data.address_2)document.getElementById('mpc_address_2').value= data.address_2;
+            if(data.phone)     document.getElementById('mpc_phone').value     = data.phone;
+            if(data.address_1) document.getElementById('mpc_address_1').value = data.address_1;
+            if(data.address_2) document.getElementById('mpc_address_2').value = data.address_2;
             if(data.delivery_method) {
                 document.getElementById('mpc_delivery_method').value = data.delivery_method;
                 document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
@@ -839,21 +860,21 @@ function mpc_render_checkout_wizard() {
             if(stateJSON) {
                 try {
                     const state = JSON.parse(stateJSON);
-                    if(state.firstName)  document.getElementById('mpc_first_name').value   = state.firstName;
-                    if(state.lastName)   document.getElementById('mpc_last_name').value    = state.lastName;
+                    if(state.firstName)  document.getElementById('mpc_first_name').value = state.firstName;
+                    if(state.lastName)   document.getElementById('mpc_last_name').value  = state.lastName;
                     if(state.email && !isUserLoggedIn) document.getElementById('mpc_email').value = state.email;
-                    if(state.phone)      document.getElementById('mpc_phone').value        = state.phone;
-                    if(state.address1)   document.getElementById('mpc_address_1').value   = state.address1;
-                    if(state.address2)   document.getElementById('mpc_address_2').value   = state.address2;
+                    if(state.phone)      document.getElementById('mpc_phone').value      = state.phone;
+                    if(state.address1)   document.getElementById('mpc_address_1').value  = state.address1;
+                    if(state.address2)   document.getElementById('mpc_address_2').value  = state.address2;
                     if(state.deliveryMethod) {
                         document.getElementById('mpc_delivery_method').value = state.deliveryMethod;
                         document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
                     }
-                    if(state.deliveryTiming)    document.getElementById('mpc_delivery_timing').value   = state.deliveryTiming;
-                    if(state.timeSlot)          document.getElementById('mpc_time_slot').value         = state.timeSlot;
-                    if(state.pickupBranch)      document.getElementById('mpc_pickup_branch').value     = state.pickupBranch;
-                    if(state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked = state.deliveryZoneCheck;
-                    if(state.allergies)         document.getElementById('mpc_allergies').value         = state.allergies;
+                    if(state.deliveryTiming)    document.getElementById('mpc_delivery_timing').value        = state.deliveryTiming;
+                    if(state.timeSlot)          document.getElementById('mpc_time_slot').value              = state.timeSlot;
+                    if(state.pickupBranch)      document.getElementById('mpc_pickup_branch').value          = state.pickupBranch;
+                    if(state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked  = state.deliveryZoneCheck;
+                    if(state.allergies)         document.getElementById('mpc_allergies').value              = state.allergies;
                     if(state.categories) {
                         document.querySelectorAll('.mpc-cat-checkbox').forEach(cb => {
                             if(state.categories.includes(cb.value)) cb.checked = true;
@@ -872,7 +893,6 @@ function mpc_render_checkout_wizard() {
             document.getElementById('mpc-summary-content').innerHTML =
                 `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${planName}</span></div>` +
                 `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Total:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${planPrice}</span></div>`;
-
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
                 document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '50%');
@@ -893,17 +913,15 @@ function mpc_render_checkout_wizard() {
             updateLogisticsSummary();
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
-                if (nextBtn) {
-                    window.scrollTo({ top: nextBtn.getBoundingClientRect().top + window.scrollY - 150, behavior: 'smooth' });
-                }
+                if (nextBtn) { window.scrollTo({ top: nextBtn.getBoundingClientRect().top + window.scrollY - 150, behavior: 'smooth' }); }
             }, 250);
         }
 
         function mpcAdjustTimingOptions() {
-            const method        = document.getElementById('mpc_delivery_method').value;
+            const method         = document.getElementById('mpc_delivery_method').value;
             const timeSlotSelect = document.getElementById('mpc_time_slot');
-            const options       = timeSlotSelect.options;
-            let resetNeeded     = false;
+            const options        = timeSlotSelect.options;
+            let resetNeeded      = false;
             for (let i = 0; i < options.length; i++) {
                 const isEarlySlot = /^(5|6|7):00 AM/.test(options[i].value);
                 if (method === 'Pickup' && isEarlySlot) {
@@ -918,11 +936,11 @@ function mpc_render_checkout_wizard() {
 
         document.getElementById('mpc_delivery_method').addEventListener('change', function() {
             if (this.value === 'Delivery') {
-                document.getElementById('mpc_delivery_zone_container').style.display  = 'block';
-                document.getElementById('mpc_pickup_branch_container').style.display  = 'none';
+                document.getElementById('mpc_delivery_zone_container').style.display = 'block';
+                document.getElementById('mpc_pickup_branch_container').style.display = 'none';
             } else {
-                document.getElementById('mpc_delivery_zone_container').style.display  = 'none';
-                document.getElementById('mpc_pickup_branch_container').style.display  = 'block';
+                document.getElementById('mpc_delivery_zone_container').style.display = 'none';
+                document.getElementById('mpc_pickup_branch_container').style.display = 'block';
             }
             mpcAdjustTimingOptions(); updateLogisticsSummary();
         });
@@ -969,7 +987,7 @@ function mpc_render_checkout_wizard() {
                 }
                 let method = document.getElementById('mpc_delivery_method').value;
                 if (method === 'Delivery' && !document.getElementById('mpc_delivery_zone_check').checked) { alert('Please confirm you are within the delivery zone to proceed.'); return; }
-                if (method === 'Pickup'   && !document.getElementById('mpc_pickup_branch').value) { alert('Please select a pickup branch.'); return; }
+                if (method === 'Pickup'   && !document.getElementById('mpc_pickup_branch').value)         { alert('Please select a pickup branch.'); return; }
                 if (checkoutData.isJuice) { mpcSubmitOrder(document.getElementById('btn-next-2')); return; }
             }
             if (direction === 1 && currentStep === 3 && !checkoutData.isJuice) {
@@ -1004,24 +1022,23 @@ function mpc_render_checkout_wizard() {
             btn.innerText = 'Redirecting to Checkout...'; btn.disabled = true;
 
             let activeNonce = _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>';
-
             let formData = new URLSearchParams();
-            formData.append('action',           'mpc_process_order');
-            formData.append('nonce',            activeNonce);
-            formData.append('product_id',       checkoutData.productId);
-            formData.append('first_name',       document.getElementById('mpc_first_name').value);
-            formData.append('last_name',        document.getElementById('mpc_last_name').value);
-            formData.append('email',            document.getElementById('mpc_email').value);
-            formData.append('phone',            document.getElementById('mpc_phone').value);
+            formData.append('action',          'mpc_process_order');
+            formData.append('nonce',           activeNonce);
+            formData.append('product_id',      checkoutData.productId);
+            formData.append('first_name',      document.getElementById('mpc_first_name').value);
+            formData.append('last_name',       document.getElementById('mpc_last_name').value);
+            formData.append('email',           document.getElementById('mpc_email').value);
+            formData.append('phone',           document.getElementById('mpc_phone').value);
             if (!isUserLoggedIn) formData.append('password', document.getElementById('mpc_password').value);
-            formData.append('address_1',        document.getElementById('mpc_address_1').value);
-            formData.append('address_2',        document.getElementById('mpc_address_2').value);
-            formData.append('delivery_method',  document.getElementById('mpc_delivery_method').value);
-            formData.append('delivery_timing',  document.getElementById('mpc_delivery_timing').value);
-            formData.append('time_slot',        document.getElementById('mpc_time_slot').value);
-            formData.append('pickup_location',  document.getElementById('mpc_pickup_branch').value);
-            formData.append('allergies',        document.getElementById('mpc_allergies').value);
-            formData.append('coupon_code',      appliedCoupon.code); // Empty string if none applied
+            formData.append('address_1',       document.getElementById('mpc_address_1').value);
+            formData.append('address_2',       document.getElementById('mpc_address_2').value);
+            formData.append('delivery_method', document.getElementById('mpc_delivery_method').value);
+            formData.append('delivery_timing', document.getElementById('mpc_delivery_timing').value);
+            formData.append('time_slot',       document.getElementById('mpc_time_slot').value);
+            formData.append('pickup_location', document.getElementById('mpc_pickup_branch').value);
+            formData.append('allergies',       document.getElementById('mpc_allergies').value);
+            formData.append('coupon_code',     appliedCoupon.code);
             selectedCats.forEach(cat => formData.append('categories[]', cat));
 
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
@@ -1079,18 +1096,18 @@ function mpc_change_pay_button_text( $text ) { return 'Place the Order'; }
 add_shortcode( 'meal_plan_customer_profile', 'mpc_render_customer_profile' );
 function mpc_render_customer_profile() {
     if ( ! is_user_logged_in() ) { return ''; }
-    $current_user = wp_get_current_user();
-    $user_id      = $current_user->ID;
-    $phone        = get_user_meta($user_id, 'billing_phone', true);
-    $method       = get_user_meta($user_id, 'delivery_method', true);
-    $timing       = get_user_meta($user_id, 'delivery_timing', true);
-    $time_slot    = get_user_meta($user_id, 'time_slot', true);
-    $pickup       = get_user_meta($user_id, 'pickup_location', true);
-    $allergies    = get_user_meta($user_id, 'allergies', true);
-    $address_1    = get_user_meta($user_id, 'billing_address_1', true);
-    $address_2    = get_user_meta($user_id, 'billing_address_2', true);
-    $city         = get_user_meta($user_id, 'billing_city', true);
-    $full_address = array_filter([$address_1, $address_2, $city]);
+    $current_user     = wp_get_current_user();
+    $user_id          = $current_user->ID;
+    $phone            = get_user_meta($user_id, 'billing_phone', true);
+    $method           = get_user_meta($user_id, 'delivery_method', true);
+    $timing           = get_user_meta($user_id, 'delivery_timing', true);
+    $time_slot        = get_user_meta($user_id, 'time_slot', true);
+    $pickup           = get_user_meta($user_id, 'pickup_location', true);
+    $allergies        = get_user_meta($user_id, 'allergies', true);
+    $address_1        = get_user_meta($user_id, 'billing_address_1', true);
+    $address_2        = get_user_meta($user_id, 'billing_address_2', true);
+    $city             = get_user_meta($user_id, 'billing_city', true);
+    $full_address     = array_filter([$address_1, $address_2, $city]);
     $address_display  = !empty($full_address) ? implode(', ', $full_address) : 'Address not provided';
     $allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
     $method_display   = $method ?: 'N/A';
@@ -1186,15 +1203,15 @@ function cmp_render_cleanup_page() {
         } elseif ( ! $confirm ) {
             $message = '<div class="notice notice-error"><p><strong>Error:</strong> Please check the confirmation box.</p></div>';
         } else {
-            $cutoff_date   = date( 'Y-m-d H:i:s', strtotime( "-$days_old days" ) );
+            $cutoff_date    = date( 'Y-m-d H:i:s', strtotime( "-$days_old days" ) );
             $subs_to_delete = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM $table_subs WHERE expiry_date < %s", $cutoff_date ) );
             if ( empty( $subs_to_delete ) ) {
                 $message = '<div class="notice notice-info"><p>No subscriptions found. Database is clean!</p></div>';
             } else {
-                $ids_list    = implode( ',', array_map( 'intval', $subs_to_delete ) );
+                $ids_list     = implode( ',', array_map( 'intval', $subs_to_delete ) );
                 $logs_deleted = $wpdb->query( "DELETE FROM $table_logs WHERE subscription_id IN ($ids_list)" );
                 $subs_deleted = $wpdb->query( "DELETE FROM $table_subs WHERE id IN ($ids_list)" );
-                $message     = '<div class="notice notice-success"><p><strong>Success!</strong> Deleted <strong>' . intval($subs_deleted) . '</strong> subscriptions and <strong>' . intval($logs_deleted) . '</strong> meal logs.</p></div>';
+                $message      = '<div class="notice notice-success"><p><strong>Success!</strong> Deleted <strong>' . intval($subs_deleted) . '</strong> subscriptions and <strong>' . intval($logs_deleted) . '</strong> meal logs.</p></div>';
             }
         }
     }
