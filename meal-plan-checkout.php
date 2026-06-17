@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
- * Version: 3.3
+ * Version: 3.4
  * Author: FMR
  */
 
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.3';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.4';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -381,6 +381,21 @@ function mpc_render_checkout_wizard() {
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
     }
 
+    // ---- v3.4: Deposit logic — server-side first-time subscriber check ----
+    $deposit_amount          = floatval( get_option( 'cmp_thermal_bag_deposit', 150 ) );
+    $is_first_time_subscriber = true;
+    if ( is_user_logged_in() ) {
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $existing   = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_subs WHERE user_id = %d AND status IN ('active','pending','expired')",
+            get_current_user_id()
+        ) );
+        if ( intval( $existing ) > 0 ) {
+            $is_first_time_subscriber = false;
+        }
+    }
+    // ---- end deposit logic ----
+
     ob_start();
     ?>
     <div class="mpc-checkout-container">
@@ -661,6 +676,10 @@ function mpc_render_checkout_wizard() {
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
 
+        // v3.4: deposit variables passed from PHP
+        const mpcDepositAmount          = <?php echo floatval( $deposit_amount ); ?>;
+        const mpcIsFirstTimeSubscriber  = <?php echo $is_first_time_subscriber ? 'true' : 'false'; ?>;
+
         // v3.2: discountType ('percent'|'fixed_cart') + amount (raw WC value)
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
@@ -749,13 +768,9 @@ function mpc_render_checkout_wizard() {
             document.getElementById('sum-final-price').innerText     = finalPrice.toFixed(2);
             document.getElementById('mpc-summary-discount').style.display = 'block';
 
-            // v3.3 — New Total: finalPrice + deposit (read from CMP deposit box if present)
-            let depositAmt = 0;
-            let depositBox = document.getElementById('cmp-deposit-box');
-            if (depositBox && depositBox.dataset.deposit) {
-                depositAmt = parseFloat(depositBox.dataset.deposit) || 0;
-            }
-            let newTotal = parseFloat((finalPrice + depositAmt).toFixed(2));
+            // v3.4 — New Total: finalPrice + deposit (from PHP-passed variable, first-time subscribers only)
+            let depositAmt = mpcIsFirstTimeSubscriber ? mpcDepositAmount : 0;
+            let newTotal   = parseFloat((finalPrice + depositAmt).toFixed(2));
             document.getElementById('sum-new-total').innerText          = newTotal.toFixed(2);
             document.getElementById('mpc-summary-new-total').style.display = 'block';
         }
@@ -908,9 +923,22 @@ function mpc_render_checkout_wizard() {
             document.querySelectorAll('.mpc-tile').forEach(t => t.classList.remove('selected'));
             tileElement.classList.add('selected');
             document.getElementById('btn-next-1').disabled = false;
+
+            // v3.4: build deposit box HTML only for first-time subscribers
+            let depositBoxHTML = '';
+            if (mpcIsFirstTimeSubscriber && mpcDepositAmount > 0) {
+                depositBoxHTML =
+                    `<div id="cmp-deposit-box" data-deposit="${mpcDepositAmount}" style="margin-top: 12px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #6ee7b7; border-radius: 6px; font-size: 0.9em;">` +
+                    `<span style="color: #065f46; font-weight: 600;">+ AED ${mpcDepositAmount.toFixed(2)} Thermal Bag Deposit</span><br>` +
+                    `<span style="color: #047857; font-size: 0.88em;">A fully refundable deposit has been added to your total as a first-time subscriber.</span>` +
+                    `</div>`;
+            }
+
             document.getElementById('mpc-summary-content').innerHTML =
                 `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${planName}</span></div>` +
-                `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Total:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${planPrice}</span></div>`;
+                `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Total:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${planPrice}</span></div>` +
+                depositBoxHTML;
+
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
                 document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '50%');
@@ -1121,13 +1149,14 @@ function mpc_render_customer_profile() {
     $timing           = get_user_meta($user_id, 'delivery_timing', true);
     $time_slot        = get_user_meta($user_id, 'time_slot', true);
     $pickup           = get_user_meta($user_id, 'pickup_location', true);
-    $allergies        = get_user_meta($user_id, 'allergies', true);
+    $allergies        = get_user_meta($user_id, 'billing_address_1', true);
     $address_1        = get_user_meta($user_id, 'billing_address_1', true);
     $address_2        = get_user_meta($user_id, 'billing_address_2', true);
     $city             = get_user_meta($user_id, 'billing_city', true);
     $full_address     = array_filter([$address_1, $address_2, $city]);
     $address_display  = !empty($full_address) ? implode(', ', $full_address) : 'Address not provided';
-    $allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
+    $allergies_raw    = get_user_meta($user_id, 'allergies', true);
+    $allergies_display = !empty($allergies_raw) ? esc_html($allergies_raw) : 'No Allergies Recorded';
     $method_display   = $method ?: 'N/A';
     if ($method === 'Pickup' && !empty($pickup)) $method_display .= ' (' . esc_html($pickup) . ')';
     ob_start();
