@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
- * Version: 3.4
+ * Version: 3.5
  * Author: FMR
  */
 
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.4';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.5';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -382,7 +382,9 @@ function mpc_render_checkout_wizard() {
     }
 
     // ---- v3.4: Deposit logic — server-side first-time subscriber check ----
-    $deposit_amount          = floatval( get_option( 'cmp_thermal_bag_deposit', 150 ) );
+    $deposit_amount           = floatval( get_option( 'cmp_thermal_bag_deposit', 150 ) );
+    // Guarantee a sensible default if the option exists but is set to 0
+    if ( $deposit_amount <= 0 ) { $deposit_amount = 150; }
     $is_first_time_subscriber = true;
     if ( is_user_logged_in() ) {
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -653,9 +655,9 @@ function mpc_render_checkout_wizard() {
                 <a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline; display: inline-block; margin-top: 4px;">Remove</a>
             </div>
 
-            <!-- NEW TOTAL box — shown only when a coupon is active. Added v3.3. -->
+            <!-- NEW TOTAL box — shown when coupon active OR when deposit applies -->
             <div id="mpc-summary-new-total" style="display: none; margin-top: 8px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; font-size: 0.9em;">
-                <span style="color: #92400e; font-weight: 600;">New Total (incl. all fees):</span><br>
+                <span style="color: #92400e; font-weight: 600;">Total (incl. all fees):</span><br>
                 <span style="color: #78350f; font-size: 1.3em; font-weight: bold;">AED <span id="sum-new-total"></span></span>
             </div>
 
@@ -677,8 +679,8 @@ function mpc_render_checkout_wizard() {
         let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
 
         // v3.4: deposit variables passed from PHP
-        const mpcDepositAmount          = <?php echo floatval( $deposit_amount ); ?>;
-        const mpcIsFirstTimeSubscriber  = <?php echo $is_first_time_subscriber ? 'true' : 'false'; ?>;
+        const mpcDepositAmount         = <?php echo floatval( $deposit_amount ); ?>;
+        const mpcIsFirstTimeSubscriber = <?php echo $is_first_time_subscriber ? 'true' : 'false'; ?>;
 
         // v3.2: discountType ('percent'|'fixed_cart') + amount (raw WC value)
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
@@ -694,6 +696,30 @@ function mpc_render_checkout_wizard() {
                 _mpcFreshNonce = response.data.nonce;
             }
         });
+
+        // ---- v3.5: GRAND TOTAL HELPER ----
+        // Always shows the correct all-in total (plan + deposit - discount).
+        // Called from both mpcSelectPlan() and mpcUpdateDiscountSummary().
+        function mpcRefreshGrandTotal() {
+            if ( ! checkoutData.planPrice ) {
+                document.getElementById('mpc-summary-new-total').style.display = 'none';
+                return;
+            }
+            let price       = parseFloat( checkoutData.planPrice );
+            let depositAmt  = ( mpcIsFirstTimeSubscriber && mpcDepositAmount > 0 ) ? mpcDepositAmount : 0;
+            let discountAmt = 0;
+            if ( appliedCoupon.code ) {
+                if ( appliedCoupon.discountType === 'percent' ) {
+                    discountAmt = parseFloat( ( price * appliedCoupon.amount / 100 ).toFixed(2) );
+                } else if ( appliedCoupon.discountType === 'fixed_cart' ) {
+                    discountAmt = parseFloat( Math.min( appliedCoupon.amount, price ).toFixed(2) );
+                }
+            }
+            let grandTotal = parseFloat( ( price - discountAmt + depositAmt ).toFixed(2) );
+            document.getElementById('sum-new-total').innerText          = grandTotal.toFixed(2);
+            document.getElementById('mpc-summary-new-total').style.display = 'block';
+        }
+        // ---- END GRAND TOTAL HELPER ----
 
         // ---- COUPON LOGIC ----
         document.getElementById('mpc-apply-coupon-btn').addEventListener('click', function() {
@@ -744,15 +770,15 @@ function mpc_render_checkout_wizard() {
             document.getElementById('mpc_coupon_input').readOnly = false;
             document.getElementById('mpc-apply-coupon-btn').style.display = '';
             document.getElementById('mpc-coupon-feedback').innerText      = '';
-            document.getElementById('mpc-summary-discount').style.display  = 'none';
-            document.getElementById('mpc-summary-new-total').style.display = 'none'; // v3.3
+            document.getElementById('mpc-summary-discount').style.display = 'none';
+            mpcRefreshGrandTotal(); // recalculate without coupon
             mpcSaveState();
         });
 
         function mpcUpdateDiscountSummary() {
             if (!appliedCoupon.code || !checkoutData.planPrice) {
-                document.getElementById('mpc-summary-discount').style.display  = 'none';
-                document.getElementById('mpc-summary-new-total').style.display = 'none'; // v3.3
+                document.getElementById('mpc-summary-discount').style.display = 'none';
+                mpcRefreshGrandTotal();
                 return;
             }
             let price       = parseFloat(checkoutData.planPrice);
@@ -767,12 +793,7 @@ function mpc_render_checkout_wizard() {
             document.getElementById('sum-discount-amount').innerText = discountAmt.toFixed(2);
             document.getElementById('sum-final-price').innerText     = finalPrice.toFixed(2);
             document.getElementById('mpc-summary-discount').style.display = 'block';
-
-            // v3.4 — New Total: finalPrice + deposit (from PHP-passed variable, first-time subscribers only)
-            let depositAmt = mpcIsFirstTimeSubscriber ? mpcDepositAmount : 0;
-            let newTotal   = parseFloat((finalPrice + depositAmt).toFixed(2));
-            document.getElementById('sum-new-total').innerText          = newTotal.toFixed(2);
-            document.getElementById('mpc-summary-new-total').style.display = 'block';
+            mpcRefreshGrandTotal(); // always recalculate grand total
         }
         // ---- END COUPON LOGIC ----
 
@@ -924,19 +945,20 @@ function mpc_render_checkout_wizard() {
             tileElement.classList.add('selected');
             document.getElementById('btn-next-1').disabled = false;
 
-            // v3.4: build deposit box HTML only for first-time subscribers
+            // v3.5: Total line shows plan price only; deposit shown separately below.
+            // Grand total box (yellow) is always recalculated via mpcRefreshGrandTotal().
             let depositBoxHTML = '';
             if (mpcIsFirstTimeSubscriber && mpcDepositAmount > 0) {
                 depositBoxHTML =
                     `<div id="cmp-deposit-box" data-deposit="${mpcDepositAmount}" style="margin-top: 12px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #6ee7b7; border-radius: 6px; font-size: 0.9em;">` +
                     `<span style="color: #065f46; font-weight: 600;">+ AED ${mpcDepositAmount.toFixed(2)} Thermal Bag Deposit</span><br>` +
-                    `<span style="color: #047857; font-size: 0.88em;">A fully refundable deposit has been added to your total as a first-time subscriber.</span>` +
+                    `<span style="color: #047857; font-size: 0.88em;">A fully refundable deposit added for first-time subscribers.</span>` +
                     `</div>`;
             }
 
             document.getElementById('mpc-summary-content').innerHTML =
                 `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${planName}</span></div>` +
-                `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Total:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${planPrice}</span></div>` +
+                `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Plan Price:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${parseFloat(planPrice).toFixed(2)}</span></div>` +
                 depositBoxHTML;
 
             if (isJuice) {
@@ -955,7 +977,7 @@ function mpc_render_checkout_wizard() {
                     document.getElementById('mpc-meals-subtitle').innerText = `Your plan includes ${allowedMeals} main meals per day. Please select exactly ${allowedMeals} categories below. (Snacks are included automatically). Meal selection is available after placing your order`;
                 }
             }
-            mpcUpdateDiscountSummary();
+            mpcUpdateDiscountSummary(); // updates coupon card + calls mpcRefreshGrandTotal()
             updateLogisticsSummary();
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
@@ -1278,17 +1300,4 @@ function cmp_render_cleanup_page() {
                             <p class="description">Minimum 30 days.</p></td>
                     </tr>
                     <tr>
-                        <th>Confirm:</th>
-                        <td><label style="color: #dc3232; font-weight: bold;"><input type="checkbox" name="confirm_delete" value="1" required> I understand this is irreversible.</label></td>
-                    </tr>
-                </table>
-                <p class="submit"><button type="submit" name="cmp_run_cleanup" class="button button-primary" style="background: #dc3232; border-color: #dc3232;">Permanently Delete Old Records</button></p>
-            </form>
-        </div>
-        <div style="margin-top: 20px; max-width: 700px; padding: 15px; background: #e5f5fa; border-left: 4px solid #00a0d2;">
-            <strong>Pro Tip:</strong> Run a full database backup before bulk deletions.
-        </div>
-    </div>
-    <?php
-}
-// END OF FILE
+     
