@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
- * Version: 3.2
+ * Version: 3.3
  * Author: FMR
  */
 
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.2';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.3';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -638,6 +638,12 @@ function mpc_render_checkout_wizard() {
                 <a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline; display: inline-block; margin-top: 4px;">Remove</a>
             </div>
 
+            <!-- NEW TOTAL box — shown only when a coupon is active. Added v3.3. -->
+            <div id="mpc-summary-new-total" style="display: none; margin-top: 8px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; font-size: 0.9em;">
+                <span style="color: #92400e; font-weight: 600;">New Total (incl. all fees):</span><br>
+                <span style="color: #78350f; font-size: 1.3em; font-weight: bold;">AED <span id="sum-new-total"></span></span>
+            </div>
+
             <div id="mpc-summary-logistics" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.9em;">
                 <strong>Method:</strong> <span id="sum-method"></span><br>
                 <strong>Receive By:</strong> <span id="sum-timing"></span>
@@ -719,13 +725,15 @@ function mpc_render_checkout_wizard() {
             document.getElementById('mpc_coupon_input').readOnly = false;
             document.getElementById('mpc-apply-coupon-btn').style.display = '';
             document.getElementById('mpc-coupon-feedback').innerText      = '';
-            document.getElementById('mpc-summary-discount').style.display = 'none';
+            document.getElementById('mpc-summary-discount').style.display  = 'none';
+            document.getElementById('mpc-summary-new-total').style.display = 'none'; // v3.3
             mpcSaveState();
         });
 
         function mpcUpdateDiscountSummary() {
             if (!appliedCoupon.code || !checkoutData.planPrice) {
-                document.getElementById('mpc-summary-discount').style.display = 'none';
+                document.getElementById('mpc-summary-discount').style.display  = 'none';
+                document.getElementById('mpc-summary-new-total').style.display = 'none'; // v3.3
                 return;
             }
             let price       = parseFloat(checkoutData.planPrice);
@@ -740,6 +748,16 @@ function mpc_render_checkout_wizard() {
             document.getElementById('sum-discount-amount').innerText = discountAmt.toFixed(2);
             document.getElementById('sum-final-price').innerText     = finalPrice.toFixed(2);
             document.getElementById('mpc-summary-discount').style.display = 'block';
+
+            // v3.3 — New Total: finalPrice + deposit (read from CMP deposit box if present)
+            let depositAmt = 0;
+            let depositBox = document.getElementById('cmp-deposit-box');
+            if (depositBox && depositBox.dataset.deposit) {
+                depositAmt = parseFloat(depositBox.dataset.deposit) || 0;
+            }
+            let newTotal = parseFloat((finalPrice + depositAmt).toFixed(2));
+            document.getElementById('sum-new-total').innerText          = newTotal.toFixed(2);
+            document.getElementById('mpc-summary-new-total').style.display = 'block';
         }
         // ---- END COUPON LOGIC ----
 
