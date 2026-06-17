@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
  * Version: 3.1
- * Author: Fareed M. Rifaideen.
+ * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
 // Prevent direct file access
