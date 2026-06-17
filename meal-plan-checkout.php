@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
- * Version: 3.2
+ * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota Upgrade)
+ * Version: 3.3
  * Author: FMR
  */
 
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.2';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.3';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -32,7 +32,7 @@ function mpc_get_fresh_nonce() {
 }
 
 // ==========================================
-// 3. AJAX: COUPON VALIDATION (v3.2 - WC-native, no whitelist)
+// 3. AJAX: COUPON VALIDATION
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_validate_coupon', 'mpc_ajax_validate_coupon');
 add_action('wp_ajax_mpc_validate_coupon',        'mpc_ajax_validate_coupon');
@@ -45,25 +45,21 @@ function mpc_ajax_validate_coupon() {
         wp_send_json_error( 'Please enter a coupon code.' );
     }
 
-    // 1. Must exist as an active WooCommerce coupon
     $coupon = new WC_Coupon( $code );
     if ( ! $coupon->get_id() ) {
         wp_send_json_error( 'Invalid coupon code.' );
     }
 
-    // 2. Must not be expired
     $expiry = $coupon->get_date_expires();
     if ( $expiry && $expiry->getTimestamp() < time() ) {
         wp_send_json_error( 'This coupon has expired.' );
     }
 
-    // 3. Check global usage limit
     $usage_limit = $coupon->get_usage_limit();
     if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) {
         wp_send_json_error( 'This coupon has reached its usage limit.' );
     }
 
-    // 4. Check per-user usage limit (logged-in users only; hard check at order time for guests)
     $usage_limit_per_user = $coupon->get_usage_limit_per_user();
     if ( $usage_limit_per_user > 0 && is_user_logged_in() ) {
         $used_by   = $coupon->get_used_by();
@@ -74,13 +70,11 @@ function mpc_ajax_validate_coupon() {
         }
     }
 
-    // 5. Only support percent and fixed_cart types
     $discount_type = $coupon->get_discount_type();
     if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) {
         wp_send_json_error( 'This coupon type is not supported.' );
     }
 
-    // 6. Label: use WC coupon description; auto-generate fallback if empty
     $label = trim( $coupon->get_description() );
     if ( empty( $label ) ) {
         $amount_display = ( $discount_type === 'percent' )
@@ -155,7 +149,6 @@ function mpc_process_order() {
     $time_slot       = sanitize_text_field($_POST['time_slot']);
     $pickup_location = isset($_POST['pickup_location']) ? sanitize_text_field($_POST['pickup_location']) : '';
     $allergies       = sanitize_textarea_field($_POST['allergies']);
-    $categories      = isset($_POST['categories']) ? array_map('sanitize_text_field', $_POST['categories']) : array();
     $coupon_code_raw = isset($_POST['coupon_code']) ? strtoupper( sanitize_text_field($_POST['coupon_code']) ) : '';
 
     if (!$product_id || !$email || !$first_name || !$address_1) {
@@ -165,17 +158,15 @@ function mpc_process_order() {
     $product    = wc_get_product($product_id);
     $plan_title = $product->get_name();
 
-    preg_match('/(\d+)\s*Meal/i', $plan_title, $matches);
-    $allowed_meals = isset($matches[1]) ? intval($matches[1]) : 0;
-
-    if ($allowed_meals > 0 && count($categories) !== $allowed_meals) {
-        wp_send_json_error('Security Check Failed: Invalid number of meal categories selected for this plan.');
-    }
-    if ($allowed_meals > 0 && !in_array('Snacks', $categories)) {
-        $categories[] = 'Snacks';
+    // v3.3 - FLEXIBLE QUOTA UPGRADE
+    // We no longer read $_POST['categories']. We force all categories so the Customer Portal can manage the daily quota.
+    if (stripos($plan_title, 'juice') !== false || stripos($plan_title, 'cleanse') !== false) {
+        $categories = array('Juices');
+    } else {
+        $categories = array('Breakfast', 'Lunch', 'Dinner', 'Snacks');
     }
 
-    // ---- SERVER-SIDE COUPON VALIDATION (v3.2 - WC-native) ----
+    // ---- SERVER-SIDE COUPON VALIDATION ----
     $discount_type   = '';
     $discount_label  = '';
     $coupon_used     = '';
@@ -197,7 +188,6 @@ function mpc_process_order() {
                 $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
             }
         }
-        // Silent fail - invalid coupon means order proceeds at full price.
     }
     // ---- END COUPON VALIDATION ----
 
@@ -248,7 +238,6 @@ function mpc_process_order() {
     $order->update_meta_data('allergies',                $allergies);
     $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
 
-    // Apply discount as a negative fee line item
     if ( ! empty( $coupon_used ) ) {
         $order->calculate_totals();
         $subtotal        = $order->get_subtotal();
@@ -389,13 +378,12 @@ function mpc_render_checkout_wizard() {
             <div class="mpc-progress">
                 <div class="mpc-step-indicator active" data-step="1"><div class="mpc-step-circle">1</div><span>Select Plan</span></div>
                 <div class="mpc-step-indicator" data-step="2"><div class="mpc-step-circle">2</div><span>Delivery Details</span></div>
-                <div class="mpc-step-indicator" data-step="3" id="mpc-indicator-meals"><div class="mpc-step-circle">3</div><span>Meal Type</span></div>
+                <div class="mpc-step-indicator" data-step="3" id="mpc-indicator-meals"><div class="mpc-step-circle">3</div><span>Dietary Info</span></div>
             </div>
 
-            <!-- STEP 1: PLAN SELECTION -->
             <div id="mpc-step-1" class="mpc-step-content active">
                 <h2 style="margin-top: 0; color: #222;">Choose Your Plan</h2>
-                <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. Then go through the process of selecting delivery options followed by selecting the meal types to finalise your order. We will then be in touch for payment and to assist you with meal selection. You will choose your specific meals after your subscription is confirmed.</p>
+                <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. You will choose your specific daily meals within your flexible quota through the Customer Portal after your subscription is confirmed.</p>
 
                 <?php
                 if ( empty($products) ) {
@@ -430,7 +418,6 @@ function mpc_render_checkout_wizard() {
                 </div>
             </div>
 
-            <!-- STEP 2: DELIVERY DETAILS -->
             <div id="mpc-step-2" class="mpc-step-content">
                 <h2 style="margin-top: 0; color: #222;">Delivery Information</h2>
 
@@ -575,7 +562,6 @@ function mpc_render_checkout_wizard() {
                     </div>
                 </div>
 
-                <!-- COUPON CODE SECTION -->
                 <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
                 <div class="mpc-form-group" id="mpc-coupon-section">
                     <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
@@ -592,27 +578,12 @@ function mpc_render_checkout_wizard() {
                 </div>
             </div>
 
-            <!-- STEP 3: MEAL TYPE -->
             <div id="mpc-step-3" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Select Your Meal Type</h2>
-                <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Which meal categories would you like included in your daily plan?</p>
-
-                <div class="mpc-form-group" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1;">
-                    <?php
-                    if (!empty($food_categories)) {
-                        foreach ($food_categories as $cat) {
-                            if (strtolower($cat) === 'juices' || strtolower($cat) === 'snacks') continue;
-                            echo '<label style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; cursor: pointer; font-weight: normal;">';
-                            echo '<input type="checkbox" class="mpc-cat-checkbox" value="'.esc_attr($cat).'" style="transform: scale(1.3);"> ' . esc_html($cat);
-                            echo '</label>';
-                        }
-                    } else { echo '<p>No categories found in database.</p>'; }
-                    ?>
-                </div>
+                <h2 style="margin-top: 0; color: #222;">Dietary Requirements</h2>
+                <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Do you have any dietary requirements or food allergies?</p>
 
                 <div class="mpc-form-group">
-                    <label>Any Food Allergies?</label>
-                    <textarea class="mpc-form-control" id="mpc_allergies" rows="3" placeholder="e.g., Nuts, Shellfish..."></textarea>
+                    <textarea class="mpc-form-control" id="mpc_allergies" rows="4" placeholder="e.g., Nuts, Shellfish, Gluten..."></textarea>
                 </div>
 
                 <div class="mpc-nav-buttons">
@@ -622,12 +593,10 @@ function mpc_render_checkout_wizard() {
             </div>
         </div>
 
-        <!-- SUMMARY PANEL -->
         <div class="mpc-summary-area">
             <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
             <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
 
-            <!-- Discount card - hidden until coupon applied -->
             <div id="mpc-summary-discount" style="display: none; margin-top: 12px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; font-size: 0.9em;">
                 <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
                     <span style="font-size: 1.1em; line-height: 1;">&#127991;</span>
@@ -642,10 +611,6 @@ function mpc_render_checkout_wizard() {
                 <strong>Method:</strong> <span id="sum-method"></span><br>
                 <strong>Receive By:</strong> <span id="sum-timing"></span>
             </div>
-            <div id="mpc-summary-meals" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.9em;">
-                <strong>Included Categories:</strong><br>
-                <span id="sum-cats" style="color: #379237;"></span>
-            </div>
         </div>
     </div>
 
@@ -655,7 +620,6 @@ function mpc_render_checkout_wizard() {
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
 
-        // v3.2: discountType ('percent'|'fixed_cart') + amount (raw WC value)
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
         let _mpcFreshNonce = null;
@@ -844,15 +808,16 @@ function mpc_render_checkout_wizard() {
                 pickupBranch:      document.getElementById('mpc_pickup_branch').value,
                 deliveryZoneCheck: document.getElementById('mpc_delivery_zone_check').checked,
                 allergies:         document.getElementById('mpc_allergies').value,
-                categories:        Array.from(document.querySelectorAll('.mpc-cat-checkbox:checked')).map(cb => cb.value),
                 couponCode:        appliedCoupon.code,
             };
             localStorage.setItem('mpcCheckoutState', JSON.stringify(state));
         }
 
-        document.querySelectorAll('.mpc-form-control, .mpc-cat-checkbox, #mpc_delivery_zone_check').forEach(el => {
-            el.addEventListener('input',  mpcSaveState);
-            el.addEventListener('change', mpcSaveState);
+        document.querySelectorAll('.mpc-form-control, #mpc_delivery_zone_check').forEach(el => {
+            if(el) {
+                el.addEventListener('input',  mpcSaveState);
+                el.addEventListener('change', mpcSaveState);
+            }
         });
 
         document.addEventListener('DOMContentLoaded', function() {
@@ -875,11 +840,7 @@ function mpc_render_checkout_wizard() {
                     if(state.pickupBranch)      document.getElementById('mpc_pickup_branch').value          = state.pickupBranch;
                     if(state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked  = state.deliveryZoneCheck;
                     if(state.allergies)         document.getElementById('mpc_allergies').value              = state.allergies;
-                    if(state.categories) {
-                        document.querySelectorAll('.mpc-cat-checkbox').forEach(cb => {
-                            if(state.categories.includes(cb.value)) cb.checked = true;
-                        });
-                    }
+                    
                     document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
                 } catch(e) {}
             }
@@ -893,6 +854,7 @@ function mpc_render_checkout_wizard() {
             document.getElementById('mpc-summary-content').innerHTML =
                 `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${planName}</span></div>` +
                 `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Total:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${planPrice}</span></div>`;
+            
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
                 document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '50%');
@@ -905,9 +867,6 @@ function mpc_render_checkout_wizard() {
                 totalSteps = 3;
                 let btn2 = document.getElementById('btn-next-2');
                 btn2.innerText = 'Next Step \u2192'; btn2.style.background = '#379237'; btn2.style.color = '#fff';
-                if (allowedMeals > 0) {
-                    document.getElementById('mpc-meals-subtitle').innerText = `Your plan includes ${allowedMeals} main meals per day. Please select exactly ${allowedMeals} categories below. (Snacks are included automatically). Meal selection is available after placing your order`;
-                }
             }
             mpcUpdateDiscountSummary();
             updateLogisticsSummary();
@@ -958,26 +917,6 @@ function mpc_render_checkout_wizard() {
                 '<br><strong>Time:</strong> ' + document.getElementById('mpc_time_slot').value;
         }
 
-        let mealCheckboxes = document.querySelectorAll('.mpc-cat-checkbox');
-        mealCheckboxes.forEach(function(box) {
-            box.addEventListener('change', function() {
-                let checkedBoxes = document.querySelectorAll('.mpc-cat-checkbox:checked');
-                if (checkoutData.allowedMeals > 0) {
-                    if (checkedBoxes.length >= checkoutData.allowedMeals) {
-                        mealCheckboxes.forEach(b => { if (!b.checked) b.disabled = true; });
-                    } else { mealCheckboxes.forEach(b => b.disabled = false); }
-                }
-                let selectedCats = [];
-                checkedBoxes.forEach(b => selectedCats.push(b.value));
-                if (selectedCats.length > 0) {
-                    document.getElementById('mpc-summary-meals').style.display = 'block';
-                    document.getElementById('sum-cats').innerText = selectedCats.join(', ');
-                } else {
-                    document.getElementById('mpc-summary-meals').style.display = 'none';
-                }
-            });
-        });
-
         function mpcChangeStep(direction) {
             if (direction === 1 && currentStep === 2) {
                 let pwdVal = document.getElementById('mpc_password').value;
@@ -990,11 +929,9 @@ function mpc_render_checkout_wizard() {
                 if (method === 'Pickup'   && !document.getElementById('mpc_pickup_branch').value)         { alert('Please select a pickup branch.'); return; }
                 if (checkoutData.isJuice) { mpcSubmitOrder(document.getElementById('btn-next-2')); return; }
             }
+            
             if (direction === 1 && currentStep === 3 && !checkoutData.isJuice) {
-                let checkedCount = document.querySelectorAll('.mpc-cat-checkbox:checked').length;
-                if (checkoutData.allowedMeals > 0 && checkedCount !== checkoutData.allowedMeals) {
-                    alert(`Your plan requires exactly ${checkoutData.allowedMeals} main meal categories.`); return;
-                }
+                // Submit directly without validating checkboxes, since they are removed!
                 mpcSubmitOrder(document.getElementById('btn-next-3')); return;
             }
 
@@ -1015,10 +952,6 @@ function mpc_render_checkout_wizard() {
         }
 
         function mpcSubmitOrder(btn) {
-            let selectedCats = [];
-            if (checkoutData.isJuice) { selectedCats.push('Juices'); }
-            else { document.querySelectorAll('.mpc-cat-checkbox:checked').forEach(b => selectedCats.push(b.value)); }
-
             btn.innerText = 'Redirecting to Checkout...'; btn.disabled = true;
 
             let activeNonce = _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>';
@@ -1039,7 +972,6 @@ function mpc_render_checkout_wizard() {
             formData.append('pickup_location', document.getElementById('mpc_pickup_branch').value);
             formData.append('allergies',       document.getElementById('mpc_allergies').value);
             formData.append('coupon_code',     appliedCoupon.code);
-            selectedCats.forEach(cat => formData.append('categories[]', cat));
 
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
@@ -1184,8 +1116,15 @@ function mpc_verify_ngenius_payment_return() {
 // ==========================================
 add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
 function cmp_add_cleanup_tool_menu() {
-    add_menu_page( 'Meal Portal Settings', 'Plan Cleanup', 'manage_options', 'meal-portal-main', 'cmp_render_cleanup_page', 'dashicons-food', 58 );
-    add_submenu_page( 'meal-portal-main', 'Meal Plan Database Cleanup', 'Meal Plan Cleanup', 'manage_options', 'meal-portal-main', 'cmp_render_cleanup_page' );
+    $parent_slug = 'meal-subscription-portal'; 
+    add_submenu_page(
+        $parent_slug, 
+        'Meal Plan Database Cleanup',
+        'Meal Plan Cleanup',         
+        'manage_options',             
+        'cmp-db-cleanup',            
+        'cmp_render_cleanup_page'     
+    );
 }
 
 function cmp_render_cleanup_page() {
