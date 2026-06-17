@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers.
- * Version: 3.1
+ * Version: 3.1.1
  * Author: FMR.
  */
 
@@ -28,7 +28,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.1';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.1.1';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -613,7 +613,7 @@ function mpc_render_checkout_wizard() {
 
             <!-- Discount line — hidden until coupon applied -->
             <div id="mpc-summary-discount" style="display: none; margin-top: 12px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; font-size: 0.9em;">
-                <span style="color: #16a34a; font-weight: bold;">🏷 <span id="sum-discount-label"></span></span><br>
+                <span style="color: #16a34a; font-weight: bold;">&#10003; <span id="sum-discount-label"></span></span><br>
                 <span style="color: #15803d;">Saving: <strong>AED <span id="sum-discount-amount"></span></strong></span><br>
                 <span style="color: #222;">You Pay: <strong>AED <span id="sum-final-price"></span></strong></span><br>
                 <a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline; display: inline-block; margin-top: 4px;">Remove</a>
@@ -1128,103 +1128,4 @@ function mpc_verify_ngenius_payment_return() {
         global $wp;
         $order_id = absint( $wp->query_vars['order-received'] );
         $order    = wc_get_order( $order_id );
-        if ( ! $order || $order->is_paid() ) return;
-
-        $reference     = sanitize_text_field($_GET['ref']);
-        $main_site_url = 'https://thecyclehub.com';
-        $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
-
-        $response = wp_remote_post( $endpoint, array(
-            'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => BISTRO_BRIDGE_SECRET ),
-            'body'    => wp_json_encode( array('reference' => $reference) ),
-            'timeout' => 20,
-        ));
-
-        if ( is_wp_error( $response ) ) {
-            $order->add_order_note('Bridge Error: ' . $response->get_error_message()); return;
-        }
-
-        $response_code = wp_remote_retrieve_response_code( $response );
-        $body          = json_decode( wp_remote_retrieve_body( $response ), true );
-
-        if ( $response_code === 200 && isset($body['success']) && $body['success'] === true ) {
-            $state = $body['state'];
-            if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {
-                $order->payment_complete( $reference );
-                $order->add_order_note('Payment captured via N-Genius Bridge. State: ' . $state . ' | Ref: ' . $reference);
-            } else {
-                $order->update_status('failed', 'Payment declined. State: ' . $state);
-            }
-        } else {
-            $error_msg = isset($body['message']) ? $body['message'] : 'HTTP ' . $response_code;
-            $order->add_order_note('Bridge Verification Failed: ' . $error_msg);
-        }
-    }
-}
-
-// ==========================================
-// 10. ADMIN: DATABASE CLEANUP TOOL
-// ==========================================
-add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
-function cmp_add_cleanup_tool_menu() {
-    add_menu_page( 'Meal Portal Settings', 'Plan Cleanup', 'manage_options', 'meal-portal-main', 'cmp_render_cleanup_page', 'dashicons-food', 58 );
-    add_submenu_page( 'meal-portal-main', 'Meal Plan Database Cleanup', 'Meal Plan Cleanup', 'manage_options', 'meal-portal-main', 'cmp_render_cleanup_page' );
-}
-
-function cmp_render_cleanup_page() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions.' );
-    global $wpdb;
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
-    $message    = '';
-
-    if ( isset( $_POST['cmp_run_cleanup'] ) && check_admin_referer( 'cmp_cleanup_action', 'cmp_cleanup_nonce' ) ) {
-        $days_old = intval( $_POST['days_old'] );
-        $confirm  = isset( $_POST['confirm_delete'] );
-        if ( $days_old < 30 ) {
-            $message = '<div class="notice notice-error"><p><strong>Error:</strong> Minimum 30 days.</p></div>';
-        } elseif ( ! $confirm ) {
-            $message = '<div class="notice notice-error"><p><strong>Error:</strong> Please check the confirmation box.</p></div>';
-        } else {
-            $cutoff_date   = date( 'Y-m-d H:i:s', strtotime( "-$days_old days" ) );
-            $subs_to_delete = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM $table_subs WHERE expiry_date < %s", $cutoff_date ) );
-            if ( empty( $subs_to_delete ) ) {
-                $message = '<div class="notice notice-info"><p>No subscriptions found. Database is clean!</p></div>';
-            } else {
-                $ids_list    = implode( ',', array_map( 'intval', $subs_to_delete ) );
-                $logs_deleted = $wpdb->query( "DELETE FROM $table_logs WHERE subscription_id IN ($ids_list)" );
-                $subs_deleted = $wpdb->query( "DELETE FROM $table_subs WHERE id IN ($ids_list)" );
-                $message     = '<div class="notice notice-success"><p><strong>Success!</strong> Deleted <strong>' . intval($subs_deleted) . '</strong> subscriptions and <strong>' . intval($logs_deleted) . '</strong> meal logs.</p></div>';
-            }
-        }
-    }
-    ?>
-    <div class="wrap">
-        <h1 style="margin-bottom: 20px;">Meal Plan Database Cleanup</h1>
-        <?php echo $message; ?>
-        <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; border-radius: 4px; max-width: 700px;">
-            <h2 style="margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px;">Purge Old Subscription Data</h2>
-            <p>Permanently delete old subscriptions and daily meal logs. <strong>Customer accounts and addresses will NOT be deleted.</strong></p>
-            <form method="POST" action="">
-                <?php wp_nonce_field( 'cmp_cleanup_action', 'cmp_cleanup_nonce' ); ?>
-                <table class="form-table">
-                    <tr>
-                        <th><label for="days_old">Target Timeframe:</label></th>
-                        <td>Delete plans expired more than <input type="number" name="days_old" id="days_old" value="90" min="30" max="3650" style="width: 80px;"> days ago.
-                            <p class="description">Minimum 30 days.</p></td>
-                    </tr>
-                    <tr>
-                        <th>Confirm:</th>
-                        <td><label style="color: #dc3232; font-weight: bold;"><input type="checkbox" name="confirm_delete" value="1" required> I understand this is irreversible.</label></td>
-                    </tr>
-                </table>
-                <p class="submit"><button type="submit" name="cmp_run_cleanup" class="button button-primary" style="background: #dc3232; border-color: #dc3232;">Permanently Delete Old Records</button></p>
-            </form>
-        </div>
-        <div style="margin-top: 20px; max-width: 700px; padding: 15px; background: #e5f5fa; border-left: 4px solid #00a0d2;">
-            <strong>Pro Tip:</strong> Run a full database backup before bulk deletions.
-        </div>
-    </div>
-    <?php
-}
-// END OF FILE
+        if ( ! $order || $
