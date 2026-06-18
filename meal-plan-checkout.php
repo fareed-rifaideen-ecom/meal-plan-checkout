@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota & Native Deposit Upgrade)
- * Version: 3.4
+ * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
+ * Version: 3.5
  * Author: FMR
  */
 
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.4';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.5';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -274,7 +274,7 @@ function mpc_process_order() {
             $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
         } elseif ( $discount_type === 'fixed_cart' ) {
             $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
-            // Secondary catch for VIP fixed cart
+            // Secondary VIP catch for Fixed Cart covering full subtotal
             if ($discount_amount >= $subtotal) $is_100_percent_free = true;
         }
 
@@ -295,7 +295,6 @@ function mpc_process_order() {
     }
 
     // --- NATIVE DEPOSIT INJECTION ---
-    // If they are a new subscriber, and NOT using a 100% free VIP code, charge the bag deposit.
     if ( $is_new_subscriber && !$is_100_percent_free ) {
         $deposit_fee = new WC_Order_Item_Fee();
         $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
@@ -330,47 +329,67 @@ function mpc_process_order() {
         'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
     ));
 
-    // --- SEND TO N-GENIUS BRIDGE ---
-    $main_site_url = 'https://thecyclehub.com';
-    $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
+    // --- VIP 100% FREE BYPASS ---
+    // If the order total is 0 (Internal Cash Payment), skip the gateway!
+    $final_order_total = (float) $order->get_total();
 
-    $payload = array(
-        'order_id'   => $order->get_id(),
-        'amount'     => $order->get_total(),
-        'currency'   => $order->get_currency(),
-        'email'      => $email,
-        'first_name' => $first_name,
-        'last_name'  => $last_name,
-        'return_url' => $order->get_checkout_order_received_url(),
-    );
+    if ( $final_order_total <= 0 ) {
+        // Mark Order as Processed
+        $order->payment_complete();
+        $order->add_order_note('100% Free VIP Coupon applied. Payment gateway bypassed (Internal Manual Entry).');
 
-    $response = wp_remote_post( $endpoint, array(
-        'headers' => array(
-            'Content-Type'   => 'application/json',
-            'x-bistro-token' => BISTRO_BRIDGE_SECRET,
-        ),
-        'body'    => wp_json_encode( $payload ),
-        'timeout' => 20,
-    ));
+        // Immediately Activate the Subscription Database Record
+        $wpdb->update(
+            $table_subs,
+            array('status' => 'active'),
+            array('wc_order_id' => $order->get_id())
+        );
 
-    if ( is_wp_error( $response ) ) {
-        wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
-    }
-
-    $raw_body = wp_remote_retrieve_body( $response );
-    $body     = json_decode( $raw_body, true );
-
-    if ( ! is_array( $body ) ) {
-        wp_send_json_error( 'Gateway Error: Invalid response from payment bridge. Raw: ' . substr( $raw_body, 0, 200 ) );
-    }
-
-    if ( isset( $body['success'] ) && $body['success'] === true ) {
-        $order->update_meta_data( '_ngenius_reference', sanitize_text_field( $body['reference'] ) );
-        $order->save();
-        wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
+        // Redirect directly to the native WooCommerce success page
+        wp_send_json_success( array( 'payment_url' => esc_url_raw( $order->get_checkout_order_received_url() ) ) );
     } else {
-        $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
-        wp_send_json_error( 'Gateway Error: ' . $error_message );
+        // --- SEND TO N-GENIUS BRIDGE ---
+        $main_site_url = 'https://thecyclehub.com';
+        $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
+
+        $payload = array(
+            'order_id'   => $order->get_id(),
+            'amount'     => $final_order_total,
+            'currency'   => $order->get_currency(),
+            'email'      => $email,
+            'first_name' => $first_name,
+            'last_name'  => $last_name,
+            'return_url' => $order->get_checkout_order_received_url(),
+        );
+
+        $response = wp_remote_post( $endpoint, array(
+            'headers' => array(
+                'Content-Type'   => 'application/json',
+                'x-bistro-token' => BISTRO_BRIDGE_SECRET,
+            ),
+            'body'    => wp_json_encode( $payload ),
+            'timeout' => 20,
+        ));
+
+        if ( is_wp_error( $response ) ) {
+            wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
+        }
+
+        $raw_body = wp_remote_retrieve_body( $response );
+        $body     = json_decode( $raw_body, true );
+
+        if ( ! is_array( $body ) ) {
+            wp_send_json_error( 'Gateway Error: Invalid response from payment bridge. Raw: ' . substr( $raw_body, 0, 200 ) );
+        }
+
+        if ( isset( $body['success'] ) && $body['success'] === true ) {
+            $order->update_meta_data( '_ngenius_reference', sanitize_text_field( $body['reference'] ) );
+            $order->save();
+            wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
+        } else {
+            $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
+            wp_send_json_error( 'Gateway Error: ' . $error_message );
+        }
     }
 }
 
@@ -676,7 +695,7 @@ function mpc_render_checkout_wizard() {
             }
         });
 
-        // ---- NEW: NATIVE MATH SUMMARY UI ----
+        // ---- NATIVE MATH SUMMARY UI ----
         function mpcRenderSummary() {
             if (!checkoutData.planPrice) {
                 document.getElementById('mpc-summary-content').innerHTML = '<p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p>';
@@ -769,7 +788,7 @@ function mpc_render_checkout_wizard() {
                     feedback.innerText   = '\u2713 ' + response.data.label + ' applied!';
                     document.getElementById('mpc_coupon_input').readOnly = true;
                     document.getElementById('mpc-apply-coupon-btn').style.display = 'none';
-                    mpcRenderSummary(); // Refresh the Math UI
+                    mpcRenderSummary(); 
                     mpcSaveState();
                 } else {
                     appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
@@ -858,7 +877,7 @@ function mpc_render_checkout_wizard() {
                 .then(response => {
                     if(response.success) {
                         isUserLoggedIn = true;
-                        isNewSubscriber = response.data.is_new_subscriber; // Update status natively!
+                        isNewSubscriber = response.data.is_new_subscriber; 
                         
                         if (response.data.new_nonce) _mpcFreshNonce = response.data.new_nonce;
                         document.getElementById('mpc_password_group').style.display = 'none';
@@ -870,7 +889,7 @@ function mpc_render_checkout_wizard() {
                             if(this.checked) populateFields(response.data);
                         });
                         
-                        mpcRenderSummary(); // Refresh the Math UI immediately with the accurate deposit!
+                        mpcRenderSummary(); 
                     } else {
                         msg.innerText = response.data;
                         this.innerText = btnText; this.disabled = false;
@@ -949,7 +968,7 @@ function mpc_render_checkout_wizard() {
                 btn2.innerText = 'Next Step \u2192'; btn2.style.background = '#379237'; btn2.style.color = '#fff';
             }
             
-            mpcRenderSummary(); // Triggers the Native Math UI logic
+            mpcRenderSummary(); 
             updateLogisticsSummary();
             
             setTimeout(function() {
