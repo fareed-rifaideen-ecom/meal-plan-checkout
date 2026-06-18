@@ -1,9 +1,10 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
+ * Plugin URI: https://github.com/fareed-rifaideen-ecom
+ * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
  * Version: 3.5
- * Author: FMR
+ * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
 // Prevent direct file access
