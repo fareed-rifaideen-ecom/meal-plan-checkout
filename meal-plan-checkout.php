@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota Upgrade)
- * Version: 3.3
+ * Description: A companion plugin that provides a streamlined 3-step custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota & Native Deposit Upgrade)
+ * Version: 3.4
  * Author: FMR
  */
 
@@ -17,7 +17,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.3';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.4';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -97,6 +97,7 @@ function mpc_ajax_validate_coupon() {
 add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
 function mpc_ajax_login() {
     check_ajax_referer('mpc_checkout_nonce', 'nonce');
+    global $wpdb;
 
     $creds = array(
         'user_login'    => sanitize_text_field($_POST['log']),
@@ -110,18 +111,26 @@ function mpc_ajax_login() {
         wp_send_json_error( $user->get_error_message() );
     } else {
         $user_id = $user->ID;
+
+        // Native Check: Is this a new subscriber?
+        $paid_plans = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
+            $user_id
+        ) );
+
         $data = array(
-            'first_name'      => $user->first_name,
-            'last_name'       => $user->last_name,
-            'email'           => $user->user_email,
-            'phone'           => get_user_meta($user_id, 'billing_phone', true),
-            'address_1'       => get_user_meta($user_id, 'billing_address_1', true),
-            'address_2'       => get_user_meta($user_id, 'billing_address_2', true),
-            'delivery_method' => get_user_meta($user_id, 'delivery_method', true),
-            'delivery_timing' => get_user_meta($user_id, 'delivery_timing', true),
-            'time_slot'       => get_user_meta($user_id, 'time_slot', true),
-            'pickup_location' => get_user_meta($user_id, 'pickup_location', true),
-            'new_nonce'       => wp_create_nonce( 'mpc_checkout_nonce' ),
+            'first_name'        => $user->first_name,
+            'last_name'         => $user->last_name,
+            'email'             => $user->user_email,
+            'phone'             => get_user_meta($user_id, 'billing_phone', true),
+            'address_1'         => get_user_meta($user_id, 'billing_address_1', true),
+            'address_2'         => get_user_meta($user_id, 'billing_address_2', true),
+            'delivery_method'   => get_user_meta($user_id, 'delivery_method', true),
+            'delivery_timing'   => get_user_meta($user_id, 'delivery_timing', true),
+            'time_slot'         => get_user_meta($user_id, 'time_slot', true),
+            'pickup_location'   => get_user_meta($user_id, 'pickup_location', true),
+            'new_nonce'         => wp_create_nonce( 'mpc_checkout_nonce' ),
+            'is_new_subscriber' => (intval($paid_plans) === 0)
         );
         wp_send_json_success($data);
     }
@@ -135,6 +144,7 @@ add_action('wp_ajax_mpc_process_order',        'mpc_process_order');
 
 function mpc_process_order() {
     check_ajax_referer('mpc_checkout_nonce', 'nonce');
+    global $wpdb;
 
     $product_id      = intval($_POST['product_id']);
     $first_name      = sanitize_text_field($_POST['first_name']);
@@ -158,8 +168,6 @@ function mpc_process_order() {
     $product    = wc_get_product($product_id);
     $plan_title = $product->get_name();
 
-    // v3.3 - FLEXIBLE QUOTA UPGRADE
-    // We no longer read $_POST['categories']. We force all categories so the Customer Portal can manage the daily quota.
     if (stripos($plan_title, 'juice') !== false || stripos($plan_title, 'cleanse') !== false) {
         $categories = array('Juices');
     } else {
@@ -170,6 +178,7 @@ function mpc_process_order() {
     $discount_type   = '';
     $discount_label  = '';
     $coupon_used     = '';
+    $is_100_percent_free = false;
 
     if ( ! empty( $coupon_code_raw ) ) {
         $wc_coupon = new WC_Coupon( $coupon_code_raw );
@@ -186,12 +195,18 @@ function mpc_process_order() {
                 $coupon_used    = $coupon_code_raw;
                 $label_raw      = trim( $wc_coupon->get_description() );
                 $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
+                
+                // VIP 100% Free Interceptor
+                if ($d_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
+                    $is_100_percent_free = true;
+                }
             }
         }
     }
-    // ---- END COUPON VALIDATION ----
 
+    // ---- USER CREATION & NEW SUBSCRIBER CHECK ----
     $user_id = get_current_user_id();
+    $is_new_subscriber = false;
 
     if (!$user_id) {
         if (email_exists($email)) {
@@ -204,8 +219,17 @@ function mpc_process_order() {
         wp_clear_auth_cookie();
         wp_set_current_user($user_id);
         wp_set_auth_cookie($user_id, true);
+        
+        $is_new_subscriber = true; // Brand new account = guaranteed new subscriber
+    } else {
+        $paid_plans = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
+            $user_id
+        ) );
+        $is_new_subscriber = (intval($paid_plans) === 0);
     }
 
+    // --- SAVE USER META ---
     wp_update_user(array('ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name));
     update_user_meta($user_id, 'billing_phone',    $phone);
     update_user_meta($user_id, 'billing_address_1',$address_1);
@@ -218,6 +242,7 @@ function mpc_process_order() {
     update_user_meta($user_id, 'pickup_location',  $pickup_location);
     update_user_meta($user_id, 'allergies',        $allergies);
 
+    // --- CREATE WOOCOMMERCE ORDER ---
     $order = wc_create_order(array('customer_id' => $user_id));
     $order->add_product($product, 1);
 
@@ -238,6 +263,7 @@ function mpc_process_order() {
     $order->update_meta_data('allergies',                $allergies);
     $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
 
+    // --- APPLY COUPON FEE (IF APPLICABLE) ---
     if ( ! empty( $coupon_used ) ) {
         $order->calculate_totals();
         $subtotal        = $order->get_subtotal();
@@ -248,6 +274,8 @@ function mpc_process_order() {
             $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
         } elseif ( $discount_type === 'fixed_cart' ) {
             $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
+            // Secondary catch for VIP fixed cart
+            if ($discount_amount >= $subtotal) $is_100_percent_free = true;
         }
 
         if ( $discount_amount > 0 ) {
@@ -266,10 +294,22 @@ function mpc_process_order() {
         }
     }
 
+    // --- NATIVE DEPOSIT INJECTION ---
+    // If they are a new subscriber, and NOT using a 100% free VIP code, charge the bag deposit.
+    if ( $is_new_subscriber && !$is_100_percent_free ) {
+        $deposit_fee = new WC_Order_Item_Fee();
+        $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
+        $deposit_fee->set_amount( 150 );
+        $deposit_fee->set_total( 150 );
+        $deposit_fee->set_tax_status( 'none' );
+        $order->add_item( $deposit_fee );
+    }
+
+    // Finalize Math
     $order->calculate_totals();
     $order->save();
 
-    global $wpdb;
+    // --- CREATE SUBSCRIPTION RECORD ---
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
     $days = 30;
@@ -290,6 +330,7 @@ function mpc_process_order() {
         'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
     ));
 
+    // --- SEND TO N-GENIUS BRIDGE ---
     $main_site_url = 'https://thecyclehub.com';
     $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
 
@@ -368,6 +409,15 @@ function mpc_render_checkout_wizard() {
             }
         }
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
+    }
+
+    // Determine initial New Subscriber status
+    $is_new_subscriber_init = 'true';
+    if ( is_user_logged_in() ) {
+        $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'", get_current_user_id() ) );
+        if ( intval($count) > 0 ) {
+            $is_new_subscriber_init = 'false';
+        }
     }
 
     ob_start();
@@ -597,16 +647,6 @@ function mpc_render_checkout_wizard() {
             <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
             <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
 
-            <div id="mpc-summary-discount" style="display: none; margin-top: 12px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; font-size: 0.9em;">
-                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                    <span style="font-size: 1.1em; line-height: 1;">&#127991;</span>
-                    <span style="color: #16a34a; font-weight: bold;" id="sum-discount-label"></span>
-                </div>
-                <span style="color: #15803d;">Saving: <strong>AED <span id="sum-discount-amount"></span></strong></span><br>
-                <span style="color: #222;">You Pay: <strong>AED <span id="sum-final-price"></span></strong></span><br>
-                <a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline; display: inline-block; margin-top: 4px;">Remove</a>
-            </div>
-
             <div id="mpc-summary-logistics" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.9em;">
                 <strong>Method:</strong> <span id="sum-method"></span><br>
                 <strong>Receive By:</strong> <span id="sum-timing"></span>
@@ -618,8 +658,10 @@ function mpc_render_checkout_wizard() {
         let currentStep  = 1;
         let totalSteps   = 3;
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
-        let isUserLoggedIn = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
-
+        
+        let isUserLoggedIn  = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
+        let isNewSubscriber = <?php echo $is_new_subscriber_init; ?>;
+        
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
         let _mpcFreshNonce = null;
@@ -634,16 +676,85 @@ function mpc_render_checkout_wizard() {
             }
         });
 
-        // ---- COUPON LOGIC ----
+        // ---- NEW: NATIVE MATH SUMMARY UI ----
+        function mpcRenderSummary() {
+            if (!checkoutData.planPrice) {
+                document.getElementById('mpc-summary-content').innerHTML = '<p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p>';
+                return;
+            }
+
+            let basePrice = parseFloat(checkoutData.planPrice);
+            let discountAmt = 0;
+            let is100PercentFree = false;
+
+            if (appliedCoupon.code) {
+                if (appliedCoupon.discountType === 'percent') {
+                    discountAmt = parseFloat((basePrice * appliedCoupon.amount / 100).toFixed(2));
+                    if (appliedCoupon.amount >= 100) is100PercentFree = true;
+                } else if (appliedCoupon.discountType === 'fixed_cart') {
+                    discountAmt = parseFloat(Math.min(appliedCoupon.amount, basePrice).toFixed(2));
+                    if (discountAmt >= basePrice) is100PercentFree = true;
+                }
+            }
+
+            let discountedPrice = basePrice - discountAmt;
+            
+            // Core Deposit Logic: Waive if returning customer OR if they have a 100% free VIP code!
+            let depositAmt = (isNewSubscriber && !is100PercentFree) ? 150 : 0;
+            
+            let newTotal = discountedPrice + depositAmt;
+
+            let html = `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${checkoutData.planName}</span></div>`;
+            html += `<div style="padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.95em;">`;
+
+            html += `<div style="display:flex; justify-content:space-between; margin-bottom: 5px;"><span>Plan Price:</span> <strong>AED ${basePrice.toFixed(2)}</strong></div>`;
+
+            if (discountAmt > 0) {
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 5px; color: #16a34a;"><span>Discount (${appliedCoupon.label}):</span> <strong>- AED ${discountAmt.toFixed(2)}</strong></div>`;
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 5px; border-bottom: 1px solid #eee; padding-bottom: 5px;"><span>Discounted Price:</span> <strong>AED ${discountedPrice.toFixed(2)}</strong></div>`;
+                html += `<div style="text-align: right; margin-bottom: 10px;"><a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline;">Remove Coupon</a></div>`;
+            }
+
+            if (depositAmt > 0) {
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
+                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Fully refundable for new users</div>`;
+            } else if (isNewSubscriber && is100PercentFree) {
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (100% Free)</strong></div>`;
+            }
+
+            html += `<div style="display:flex; justify-content:space-between; border-top: 2px solid #222; padding-top: 10px; margin-top: 5px; font-size: 1.2em;"><span><strong>New Total:</strong></span> <strong style="color: #222;">AED ${newTotal.toFixed(2)}</strong></div>`;
+            html += `</div>`;
+
+            document.getElementById('mpc-summary-content').innerHTML = html;
+
+            // Re-attach listener for remove coupon
+            let removeBtn = document.getElementById('mpc-remove-coupon');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
+                    document.getElementById('mpc_coupon_input').value    = '';
+                    document.getElementById('mpc_coupon_input').readOnly = false;
+                    document.getElementById('mpc-apply-coupon-btn').style.display = '';
+                    document.getElementById('mpc-coupon-feedback').innerText      = '';
+                    mpcSaveState();
+                    mpcRenderSummary(); 
+                });
+            }
+        }
+        // ---- END NATIVE MATH UI ----
+
         document.getElementById('mpc-apply-coupon-btn').addEventListener('click', function() {
             let code     = document.getElementById('mpc_coupon_input').value.trim().toUpperCase();
             let feedback = document.getElementById('mpc-coupon-feedback');
             if (!code) { feedback.style.color = '#dc2626'; feedback.innerText = 'Please enter a coupon code.'; return; }
             this.innerText = 'Checking...'; this.disabled = true; feedback.innerText = '';
+            
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_validate_coupon');
             formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
             formData.append('coupon_code', code);
+            
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(response => {
@@ -658,7 +769,7 @@ function mpc_render_checkout_wizard() {
                     feedback.innerText   = '\u2713 ' + response.data.label + ' applied!';
                     document.getElementById('mpc_coupon_input').readOnly = true;
                     document.getElementById('mpc-apply-coupon-btn').style.display = 'none';
-                    mpcUpdateDiscountSummary();
+                    mpcRenderSummary(); // Refresh the Math UI
                     mpcSaveState();
                 } else {
                     appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
@@ -675,37 +786,6 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc-apply-coupon-btn').disabled  = false;
             });
         });
-
-        document.getElementById('mpc-remove-coupon').addEventListener('click', function(e) {
-            e.preventDefault();
-            appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
-            document.getElementById('mpc_coupon_input').value    = '';
-            document.getElementById('mpc_coupon_input').readOnly = false;
-            document.getElementById('mpc-apply-coupon-btn').style.display = '';
-            document.getElementById('mpc-coupon-feedback').innerText      = '';
-            document.getElementById('mpc-summary-discount').style.display = 'none';
-            mpcSaveState();
-        });
-
-        function mpcUpdateDiscountSummary() {
-            if (!appliedCoupon.code || !checkoutData.planPrice) {
-                document.getElementById('mpc-summary-discount').style.display = 'none';
-                return;
-            }
-            let price       = parseFloat(checkoutData.planPrice);
-            let discountAmt = 0;
-            if (appliedCoupon.discountType === 'percent') {
-                discountAmt = parseFloat((price * appliedCoupon.amount / 100).toFixed(2));
-            } else if (appliedCoupon.discountType === 'fixed_cart') {
-                discountAmt = parseFloat(Math.min(appliedCoupon.amount, price).toFixed(2));
-            }
-            let finalPrice = parseFloat((price - discountAmt).toFixed(2));
-            document.getElementById('sum-discount-label').innerText  = appliedCoupon.label;
-            document.getElementById('sum-discount-amount').innerText = discountAmt.toFixed(2);
-            document.getElementById('sum-final-price').innerText     = finalPrice.toFixed(2);
-            document.getElementById('mpc-summary-discount').style.display = 'block';
-        }
-        // ---- END COUPON LOGIC ----
 
         document.getElementById('mpc_toggle_password').addEventListener('click', function(e) {
             e.preventDefault();
@@ -767,15 +847,19 @@ function mpc_render_checkout_wizard() {
                 if(!log || !pwd) { msg.innerText = "Please enter email and password."; return; }
                 let btnText = this.innerText;
                 this.innerText = 'Logging in...'; this.disabled = true;
+                
                 let formData = new URLSearchParams();
                 formData.append('action', 'mpc_login_user');
                 formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
                 formData.append('log', log); formData.append('pwd', pwd);
+                
                 fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
                 .then(res => res.json())
                 .then(response => {
                     if(response.success) {
                         isUserLoggedIn = true;
+                        isNewSubscriber = response.data.is_new_subscriber; // Update status natively!
+                        
                         if (response.data.new_nonce) _mpcFreshNonce = response.data.new_nonce;
                         document.getElementById('mpc_password_group').style.display = 'none';
                         let wHTML = '<div style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">';
@@ -785,6 +869,8 @@ function mpc_render_checkout_wizard() {
                         document.getElementById('mpc_use_saved_details_ajax').addEventListener('change', function() {
                             if(this.checked) populateFields(response.data);
                         });
+                        
+                        mpcRenderSummary(); // Refresh the Math UI immediately with the accurate deposit!
                     } else {
                         msg.innerText = response.data;
                         this.innerText = btnText; this.disabled = false;
@@ -814,10 +900,7 @@ function mpc_render_checkout_wizard() {
         }
 
         document.querySelectorAll('.mpc-form-control, #mpc_delivery_zone_check').forEach(el => {
-            if(el) {
-                el.addEventListener('input',  mpcSaveState);
-                el.addEventListener('change', mpcSaveState);
-            }
+            if(el) { el.addEventListener('input', mpcSaveState); el.addEventListener('change', mpcSaveState); }
         });
 
         document.addEventListener('DOMContentLoaded', function() {
@@ -851,9 +934,6 @@ function mpc_render_checkout_wizard() {
             document.querySelectorAll('.mpc-tile').forEach(t => t.classList.remove('selected'));
             tileElement.classList.add('selected');
             document.getElementById('btn-next-1').disabled = false;
-            document.getElementById('mpc-summary-content').innerHTML =
-                `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${planName}</span></div>` +
-                `<div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px dashed #ddd;"><strong>Total:</strong><br><span style="color: #222; font-size: 1.4em; font-weight: bold;">AED ${planPrice}</span></div>`;
             
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
@@ -868,8 +948,10 @@ function mpc_render_checkout_wizard() {
                 let btn2 = document.getElementById('btn-next-2');
                 btn2.innerText = 'Next Step \u2192'; btn2.style.background = '#379237'; btn2.style.color = '#fff';
             }
-            mpcUpdateDiscountSummary();
+            
+            mpcRenderSummary(); // Triggers the Native Math UI logic
             updateLogisticsSummary();
+            
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
                 if (nextBtn) { window.scrollTo({ top: nextBtn.getBoundingClientRect().top + window.scrollY - 150, behavior: 'smooth' }); }
@@ -931,7 +1013,6 @@ function mpc_render_checkout_wizard() {
             }
             
             if (direction === 1 && currentStep === 3 && !checkoutData.isJuice) {
-                // Submit directly without validating checkboxes, since they are removed!
                 mpcSubmitOrder(document.getElementById('btn-next-3')); return;
             }
 
