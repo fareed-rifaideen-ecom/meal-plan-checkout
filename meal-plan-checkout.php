@@ -1215,7 +1215,7 @@ function mpc_verify_ngenius_payment_return() {
 // ==========================================
 // 10. ADMIN: DATABASE CLEANUP TOOL
 // ==========================================
-add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
+add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu', 99 );
 function cmp_add_cleanup_tool_menu() {
     $parent_slug = 'meal-subscription-portal'; 
     add_submenu_page(
@@ -1287,7 +1287,7 @@ function cmp_render_cleanup_page() {
 // ==========================================
 // 11. ADMIN: MANUAL SUBSCRIBER IMPORT TOOL
 // ==========================================
-add_action( 'admin_menu', 'cmp_add_manual_import_menu' );
+add_action( 'admin_menu', 'cmp_add_manual_import_menu', 99 );
 function cmp_add_manual_import_menu() {
     // Attach to the existing Meal Portal menu
     add_submenu_page(
