@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.6
+ * Version: 3.7
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.6';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.7';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -112,7 +112,7 @@ function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $u
     $restricted_emails = $coupon->get_email_restrictions();
     if ( ! empty( $restricted_emails ) ) {
         if ( empty( $user_email ) ) {
-            return 'Please enter your email address before applying this coupon.';
+            return 'This coupon is restricted. Please log in, or proceed to Step 2 to enter your email before applying.';
         }
         $email_valid = false;
         foreach ( $restricted_emails as $restricted_email ) {
@@ -573,6 +573,16 @@ function mpc_render_checkout_wizard() {
                     }
                 }
                 ?>
+                
+                <div class="mpc-form-group" id="mpc-coupon-section" style="display: none; border-top: 1px solid #eee; padding-top: 25px; margin-top: 20px;">
+                    <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
+                    <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
+                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
+                        <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn" style="background: #334155; color: #fff; height: 44px; padding: 0 20px; font-size: 0.9em; white-space: nowrap;">Apply Code</button>
+                    </div>
+                    <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
+                </div>
+
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-1" disabled>Next: Delivery Details &rarr;</button>
                 </div>
@@ -720,16 +730,6 @@ function mpc_render_checkout_wizard() {
                             ?>
                         </select>
                     </div>
-                </div>
-
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
-                <div class="mpc-form-group" id="mpc-coupon-section">
-                    <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
-                    <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
-                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
-                        <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn" style="background: #334155; color: #fff; height: 44px; padding: 0 20px; font-size: 0.9em; white-space: nowrap;">Apply Code</button>
-                    </div>
-                    <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
                 </div>
 
                 <div class="mpc-nav-buttons">
@@ -1065,6 +1065,9 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc-coupon-feedback').innerText      = '';
                 mpcSaveState();
             }
+
+            // --- SHOW COUPON SECTION NOW THAT A PLAN IS SELECTED ---
+            document.getElementById('mpc-coupon-section').style.display = 'block';
 
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
