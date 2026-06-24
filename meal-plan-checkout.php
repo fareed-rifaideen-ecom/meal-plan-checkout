@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.5
+ * Version: 3.6
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.5';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.6';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -33,49 +33,138 @@ function mpc_get_fresh_nonce() {
 }
 
 // ==========================================
-// 3. AJAX: COUPON VALIDATION
+// 3. HELPER: STRICT WOOCOMMERCE COUPON VALIDATION
+// ==========================================
+function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $user_email ) {
+    // 1. Expiry date check
+    $expiry = $coupon->get_date_expires();
+    if ( $expiry && $expiry->getTimestamp() < time() ) {
+        return 'This coupon has expired.';
+    }
+
+    // 2. Usage limit check
+    $usage_limit = $coupon->get_usage_limit();
+    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) {
+        return 'This coupon has reached its global usage limit.';
+    }
+
+    // 3. Usage limit per user
+    $usage_limit_per_user = $coupon->get_usage_limit_per_user();
+    if ( $usage_limit_per_user > 0 ) {
+        $used_by = $coupon->get_used_by();
+        $user_id = get_current_user_id();
+        $usage_count = 0;
+        foreach ( $used_by as $used ) {
+            if ( ( $user_id > 0 && intval( $used ) === $user_id ) || strcasecmp( $used, $user_email ) === 0 ) {
+                $usage_count++;
+            }
+        }
+        if ( $usage_count >= $usage_limit_per_user ) {
+            return 'You have already reached the usage limit for this coupon.';
+        }
+    }
+
+    // 4. Supported types
+    $discount_type = $coupon->get_discount_type();
+    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) {
+        return 'This coupon type is not supported in the custom checkout.';
+    }
+
+    // 5. Min / Max Spend limits
+    $min_spend = $coupon->get_minimum_amount();
+    if ( $min_spend > 0 && $price < $min_spend ) {
+        return 'Minimum spend for this coupon is AED ' . $min_spend;
+    }
+
+    $max_spend = $coupon->get_maximum_amount();
+    if ( $max_spend > 0 && $price > $max_spend ) {
+        return 'Maximum spend for this coupon is AED ' . $max_spend;
+    }
+
+    // 6. Specific Product Restrictions
+    $valid_products = $coupon->get_product_ids();
+    if ( ! empty( $valid_products ) && ! in_array( $product_id, $valid_products ) ) {
+        return 'This coupon is not applicable to the selected plan.';
+    }
+
+    // 7. Excluded Products
+    $excluded_products = $coupon->get_excluded_product_ids();
+    if ( ! empty( $excluded_products ) && in_array( $product_id, $excluded_products ) ) {
+        return 'The selected plan is excluded from this coupon.';
+    }
+
+    // 8. Product Categories
+    $valid_categories = $coupon->get_product_categories();
+    $excluded_categories = $coupon->get_excluded_product_categories();
+    if ( ! empty( $valid_categories ) || ! empty( $excluded_categories ) ) {
+        $product_cats = wc_get_product_term_ids( $product_id, 'product_cat' );
+        
+        if ( ! empty( $valid_categories ) && count( array_intersect( $valid_categories, $product_cats ) ) === 0 ) {
+            return 'This coupon is not applicable to this plan category.';
+        }
+        
+        if ( ! empty( $excluded_categories ) && count( array_intersect( $excluded_categories, $product_cats ) ) > 0 ) {
+            return 'This plan category is excluded from this coupon.';
+        }
+    }
+
+    // 9. Email Restrictions (Supports wildcard matches like *@example.com)
+    $restricted_emails = $coupon->get_email_restrictions();
+    if ( ! empty( $restricted_emails ) ) {
+        if ( empty( $user_email ) ) {
+            return 'Please enter your email address before applying this coupon.';
+        }
+        $email_valid = false;
+        foreach ( $restricted_emails as $restricted_email ) {
+            $regex = '/^' . str_replace( '\*', '.*', preg_quote( $restricted_email, '/' ) ) . '$/i';
+            if ( preg_match( $regex, $user_email ) ) {
+                $email_valid = true;
+                break;
+            }
+        }
+        if ( ! $email_valid ) {
+            return 'This coupon is not valid for your email address.';
+        }
+    }
+
+    return true; // All rules passed
+}
+
+// ==========================================
+// 4. AJAX: COUPON VALIDATION FRONTEND
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_validate_coupon', 'mpc_ajax_validate_coupon');
 add_action('wp_ajax_mpc_validate_coupon',        'mpc_ajax_validate_coupon');
 function mpc_ajax_validate_coupon() {
     check_ajax_referer( 'mpc_checkout_nonce', 'nonce' );
 
-    $code = strtoupper( sanitize_text_field( $_POST['coupon_code'] ) );
+    $code       = strtoupper( sanitize_text_field( $_POST['coupon_code'] ) );
+    $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
+    $user_email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
 
-    if ( empty( $code ) ) {
-        wp_send_json_error( 'Please enter a coupon code.' );
+    if ( is_user_logged_in() && empty($user_email) ) {
+        $user_email = wp_get_current_user()->user_email;
     }
+
+    if ( empty( $code ) ) { wp_send_json_error( 'Please enter a coupon code.' ); }
+    if ( empty( $product_id ) ) { wp_send_json_error( 'Please select a meal plan first.' ); }
+
+    $product = wc_get_product($product_id);
+    if ( ! $product ) { wp_send_json_error( 'Invalid meal plan selected.' ); }
+    $price = (float) $product->get_price();
 
     $coupon = new WC_Coupon( $code );
     if ( ! $coupon->get_id() ) {
         wp_send_json_error( 'Invalid coupon code.' );
     }
 
-    $expiry = $coupon->get_date_expires();
-    if ( $expiry && $expiry->getTimestamp() < time() ) {
-        wp_send_json_error( 'This coupon has expired.' );
-    }
-
-    $usage_limit = $coupon->get_usage_limit();
-    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) {
-        wp_send_json_error( 'This coupon has reached its usage limit.' );
-    }
-
-    $usage_limit_per_user = $coupon->get_usage_limit_per_user();
-    if ( $usage_limit_per_user > 0 && is_user_logged_in() ) {
-        $used_by   = $coupon->get_used_by();
-        $user_id   = get_current_user_id();
-        $user_used = count( array_filter( $used_by, fn($id) => intval($id) === $user_id ) );
-        if ( $user_used >= $usage_limit_per_user ) {
-            wp_send_json_error( 'You have already used this coupon.' );
-        }
+    // Run the strict rule engine
+    $validation_result = mpc_validate_woocommerce_coupon_rules($coupon, $product_id, $price, $user_email);
+    if ( $validation_result !== true ) {
+        wp_send_json_error( $validation_result );
     }
 
     $discount_type = $coupon->get_discount_type();
-    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) {
-        wp_send_json_error( 'This coupon type is not supported.' );
-    }
-
     $label = trim( $coupon->get_description() );
     if ( empty( $label ) ) {
         $amount_display = ( $discount_type === 'percent' )
@@ -93,7 +182,7 @@ function mpc_ajax_validate_coupon() {
 }
 
 // ==========================================
-// 4. AJAX: SECURE USER LOGIN
+// 5. AJAX: SECURE USER LOGIN
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
 function mpc_ajax_login() {
@@ -138,7 +227,7 @@ function mpc_ajax_login() {
 }
 
 // ==========================================
-// 5. AJAX: ORDER PROCESSING
+// 6. AJAX: ORDER PROCESSING
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_process_order', 'mpc_process_order');
 add_action('wp_ajax_mpc_process_order',        'mpc_process_order');
@@ -184,24 +273,25 @@ function mpc_process_order() {
     if ( ! empty( $coupon_code_raw ) ) {
         $wc_coupon = new WC_Coupon( $coupon_code_raw );
         if ( $wc_coupon->get_id() ) {
-            $expiry        = $wc_coupon->get_date_expires();
-            $is_expired    = $expiry && $expiry->getTimestamp() < time();
-            $usage_limit   = $wc_coupon->get_usage_limit();
-            $usage_maxed   = ( $usage_limit > 0 && $wc_coupon->get_usage_count() >= $usage_limit );
-            $d_type        = $wc_coupon->get_discount_type();
-            $is_supported  = in_array( $d_type, array( 'percent', 'fixed_cart' ), true );
-
-            if ( ! $is_expired && ! $usage_maxed && $is_supported ) {
-                $discount_type  = $d_type;
+            
+            // Re-run strict rules before allowing payment to process
+            $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, (float)$product->get_price(), $email);
+            
+            if ( $validation_result === true ) {
+                $discount_type  = $wc_coupon->get_discount_type();
                 $coupon_used    = $coupon_code_raw;
                 $label_raw      = trim( $wc_coupon->get_description() );
                 $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
                 
                 // VIP 100% Free Interceptor
-                if ($d_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
+                if ($discount_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
                     $is_100_percent_free = true;
                 }
+            } else {
+                wp_send_json_error( 'Coupon Error: ' . $validation_result );
             }
+        } else {
+            wp_send_json_error( 'Coupon Error: Invalid coupon code.' );
         }
     }
 
@@ -395,7 +485,7 @@ function mpc_process_order() {
 }
 
 // ==========================================
-// 6. FRONTEND WIZARD RENDERER
+// 7. FRONTEND WIZARD RENDERER
 // ==========================================
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
@@ -767,13 +857,24 @@ function mpc_render_checkout_wizard() {
         document.getElementById('mpc-apply-coupon-btn').addEventListener('click', function() {
             let code     = document.getElementById('mpc_coupon_input').value.trim().toUpperCase();
             let feedback = document.getElementById('mpc-coupon-feedback');
-            if (!code) { feedback.style.color = '#dc2626'; feedback.innerText = 'Please enter a coupon code.'; return; }
+            
+            if (!checkoutData.productId) { 
+                feedback.style.color = '#dc2626'; feedback.innerText = 'Please select a plan from Step 1 first.'; return; 
+            }
+            if (!code) { 
+                feedback.style.color = '#dc2626'; feedback.innerText = 'Please enter a coupon code.'; return; 
+            }
+            
+            let userEmail = document.getElementById('mpc_email').value;
+
             this.innerText = 'Checking...'; this.disabled = true; feedback.innerText = '';
             
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_validate_coupon');
             formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
             formData.append('coupon_code', code);
+            formData.append('product_id', checkoutData.productId);
+            formData.append('email', userEmail);
             
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
@@ -827,7 +928,7 @@ function mpc_render_checkout_wizard() {
                 ef.value = data.email; ef.readOnly = true;
                 ef.style.background = '#f1f5f9'; ef.style.cursor = 'not-allowed';
             }
-            if(data.phone)     document.getElementById('mpc_phone').value     = data.phone;
+            if(data.phone)     document.getElementById('mpc_phone').value      = data.phone;
             if(data.address_1) document.getElementById('mpc_address_1').value = data.address_1;
             if(data.address_2) document.getElementById('mpc_address_2').value = data.address_2;
             if(data.delivery_method) {
@@ -955,6 +1056,16 @@ function mpc_render_checkout_wizard() {
             tileElement.classList.add('selected');
             document.getElementById('btn-next-1').disabled = false;
             
+            // Auto-clear coupon if switching plans to ensure validation runs again
+            if (appliedCoupon.code) {
+                appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
+                document.getElementById('mpc_coupon_input').value    = '';
+                document.getElementById('mpc_coupon_input').readOnly = false;
+                document.getElementById('mpc-apply-coupon-btn').style.display = '';
+                document.getElementById('mpc-coupon-feedback').innerText      = '';
+                mpcSaveState();
+            }
+
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
                 document.querySelectorAll('.mpc-step-indicator').forEach(el => el.style.width = '50%');
@@ -1099,7 +1210,7 @@ function mpc_render_checkout_wizard() {
 }
 
 // ==========================================
-// 7. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
+// 8. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
 // ==========================================
 add_action( 'woocommerce_order_status_processing', 'mpc_activate_subscription_on_payment', 10, 1 );
 add_action( 'woocommerce_order_status_completed',  'mpc_activate_subscription_on_payment', 10, 1 );
@@ -1124,7 +1235,7 @@ add_filter( 'woocommerce_pay_order_button_text', 'mpc_change_pay_button_text' );
 function mpc_change_pay_button_text( $text ) { return 'Place the Order'; }
 
 // ==========================================
-// 8. CUSTOMER DASHBOARD PROFILE WIDGET
+// 9. CUSTOMER DASHBOARD PROFILE WIDGET
 // ==========================================
 add_shortcode( 'meal_plan_customer_profile', 'mpc_render_customer_profile' );
 function mpc_render_customer_profile() {
@@ -1170,7 +1281,7 @@ function mpc_render_customer_profile() {
 }
 
 // ==========================================
-// 9. PAYMENT VERIFICATION BRIDGE
+// 10. PAYMENT VERIFICATION BRIDGE
 // ==========================================
 add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
 function mpc_verify_ngenius_payment_return() {
@@ -1211,77 +1322,3 @@ function mpc_verify_ngenius_payment_return() {
         }
     }
 }
-
-// ==========================================
-// 10. ADMIN: DATABASE CLEANUP TOOL
-// ==========================================
-add_action( 'admin_menu', 'cmp_add_cleanup_tool_menu' );
-function cmp_add_cleanup_tool_menu() {
-    $parent_slug = 'meal-subscription-portal'; 
-    add_submenu_page(
-        $parent_slug, 
-        'Meal Plan Database Cleanup',
-        'Meal Plan Cleanup',         
-        'manage_options',             
-        'cmp-db-cleanup',            
-        'cmp_render_cleanup_page'     
-    );
-}
-
-function cmp_render_cleanup_page() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions.' );
-    global $wpdb;
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
-    $message    = '';
-
-    if ( isset( $_POST['cmp_run_cleanup'] ) && check_admin_referer( 'cmp_cleanup_action', 'cmp_cleanup_nonce' ) ) {
-        $days_old = intval( $_POST['days_old'] );
-        $confirm  = isset( $_POST['confirm_delete'] );
-        if ( $days_old < 30 ) {
-            $message = '<div class="notice notice-error"><p><strong>Error:</strong> Minimum 30 days.</p></div>';
-        } elseif ( ! $confirm ) {
-            $message = '<div class="notice notice-error"><p><strong>Error:</strong> Please check the confirmation box.</p></div>';
-        } else {
-            $cutoff_date    = date( 'Y-m-d H:i:s', strtotime( "-$days_old days" ) );
-            $subs_to_delete = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM $table_subs WHERE expiry_date < %s", $cutoff_date ) );
-            if ( empty( $subs_to_delete ) ) {
-                $message = '<div class="notice notice-info"><p>No subscriptions found. Database is clean!</p></div>';
-            } else {
-                $ids_list     = implode( ',', array_map( 'intval', $subs_to_delete ) );
-                $logs_deleted = $wpdb->query( "DELETE FROM $table_logs WHERE subscription_id IN ($ids_list)" );
-                $subs_deleted = $wpdb->query( "DELETE FROM $table_subs WHERE id IN ($ids_list)" );
-                $message      = '<div class="notice notice-success"><p><strong>Success!</strong> Deleted <strong>' . intval($subs_deleted) . '</strong> subscriptions and <strong>' . intval($logs_deleted) . '</strong> meal logs.</p></div>';
-            }
-        }
-    }
-    ?>
-    <div class="wrap">
-        <h1 style="margin-bottom: 20px;">Meal Plan Database Cleanup</h1>
-        <?php echo $message; ?>
-        <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; border-radius: 4px; max-width: 700px;">
-            <h2 style="margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px;">Purge Old Subscription Data</h2>
-            <p>Permanently delete old subscriptions and daily meal logs. <strong>Customer accounts and addresses will NOT be deleted.</strong></p>
-            <form method="POST" action="">
-                <?php wp_nonce_field( 'cmp_cleanup_action', 'cmp_cleanup_nonce' ); ?>
-                <table class="form-table">
-                    <tr>
-                        <th><label for="days_old">Target Timeframe:</label></th>
-                        <td>Delete plans expired more than <input type="number" name="days_old" id="days_old" value="90" min="30" max="3650" style="width: 80px;"> days ago.
-                            <p class="description">Minimum 30 days.</p></td>
-                    </tr>
-                    <tr>
-                        <th>Confirm:</th>
-                        <td><label style="color: #dc3232; font-weight: bold;"><input type="checkbox" name="confirm_delete" value="1" required> I understand this is irreversible.</label></td>
-                    </tr>
-                </table>
-                <p class="submit"><button type="submit" name="cmp_run_cleanup" class="button button-primary" style="background: #dc3232; border-color: #dc3232;">Permanently Delete Old Records</button></p>
-            </form>
-        </div>
-        <div style="margin-top: 20px; max-width: 700px; padding: 15px; background: #e5f5fa; border-left: 4px solid #00a0d2;">
-            <strong>Pro Tip:</strong> Run a full database backup before bulk deletions.
-        </div>
-    </div>
-    <?php
-}
-// END OF FILE
