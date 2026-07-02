@@ -827,7 +827,7 @@ function mpc_render_checkout_wizard() {
 
             if (depositAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
-                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers</div>`;
+                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Click support/WhatsApp if you are an existing cutomer.</div>`;
             } else if (isNewSubscriber && is100PercentFree) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (100% Free)</strong></div>`;
             }
