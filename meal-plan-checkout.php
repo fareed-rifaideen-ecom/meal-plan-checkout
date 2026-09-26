@@ -249,6 +249,7 @@ function mpc_process_order() {
     $time_slot       = sanitize_text_field($_POST['time_slot']);
     $pickup_location = isset($_POST['pickup_location']) ? sanitize_text_field($_POST['pickup_location']) : '';
     $allergies       = sanitize_textarea_field($_POST['allergies']);
+    $recipient_name  = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : ''; // NEW RECIPIENT NAME
     $coupon_code_raw = isset($_POST['coupon_code']) ? strtoupper( sanitize_text_field($_POST['coupon_code']) ) : '';
 
     if (!$product_id || !$email || !$first_name || !$address_1) {
@@ -409,10 +410,16 @@ function mpc_process_order() {
     if (stripos($plan_title, '5')  !== false) $days = 5;
     if (stripos($plan_title, '3')  !== false && stripos($plan_title, 'juice') !== false) $days = 3;
 
+    // --- APPEND RECIPIENT NAME FOR DB ---
+    $final_plan_name = $plan_title;
+    if (!empty($recipient_name)) {
+        $final_plan_name .= ' - ' . $recipient_name;
+    }
+
     $wpdb->insert($table_subs, array(
         'user_id'            => $user_id,
         'wc_order_id'        => $order->get_id(),
-        'plan_name'          => $plan_title,
+        'plan_name'          => $final_plan_name, // Now includes recipient name
         'total_days'         => $days,
         'allowed_categories' => implode(',', $categories),
         'status'             => 'pending',
@@ -739,10 +746,20 @@ function mpc_render_checkout_wizard() {
             </div>
 
             <div id="mpc-step-3" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Dietary Requirements</h2>
-                <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Do you have any dietary requirements or food allergies?</p>
+                <h2 style="margin-top: 0; color: #222;">Dietary Info & Recipient</h2>
+                <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Who is this plan for, and do they have any food allergies?</p>
+
+                <!-- NEW RECIPIENT FIELD FOR CUSTOM CHECKOUT -->
+                <div class="mpc-form-group" style="margin-bottom: 20px;">
+                    <label style="font-weight:bold; color: #334155; margin-bottom: 5px; display: block;">
+                        Recipient Name (Optional)
+                        <span title="If buying for a family member, enter their name here so they get their own dedicated calendar tab in the dashboard." style="cursor:help; font-size:0.85em; background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:50%; margin-left:5px; vertical-align:middle; display:inline-block;">?</span>
+                    </label>
+                    <input type="text" class="mpc-form-control" id="mpc_recipient_name" placeholder="e.g., Sarah, John, etc.">
+                </div>
 
                 <div class="mpc-form-group">
+                    <label style="font-weight:bold; color: #334155; margin-bottom: 5px; display: block;">Allergies</label>
                     <textarea class="mpc-form-control" id="mpc_allergies" rows="4" placeholder="e.g., Nuts, Shellfish, Gluten..."></textarea>
                 </div>
 
@@ -929,8 +946,8 @@ function mpc_render_checkout_wizard() {
                 ef.style.background = '#f1f5f9'; ef.style.cursor = 'not-allowed';
             }
             if(data.phone)     document.getElementById('mpc_phone').value      = data.phone;
-            if(data.address_1) document.getElementById('mpc_address_1').value = data.address_1;
-            if(data.address_2) document.getElementById('mpc_address_2').value = data.address_2;
+            if(data.address_1) document.getElementById('mpc_address_1').value  = data.address_1;
+            if(data.address_2) document.getElementById('mpc_address_2').value  = data.address_2;
             if(data.delivery_method) {
                 document.getElementById('mpc_delivery_method').value = data.delivery_method;
                 document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
@@ -1003,18 +1020,19 @@ function mpc_render_checkout_wizard() {
 
         function mpcSaveState() {
             const state = {
-                firstName: document.getElementById('mpc_first_name').value,
-                lastName:  document.getElementById('mpc_last_name').value,
-                email:     document.getElementById('mpc_email').value,
-                phone:     document.getElementById('mpc_phone').value,
-                address1:  document.getElementById('mpc_address_1').value,
-                address2:  document.getElementById('mpc_address_2').value,
+                firstName:         document.getElementById('mpc_first_name').value,
+                lastName:          document.getElementById('mpc_last_name').value,
+                email:             document.getElementById('mpc_email').value,
+                phone:             document.getElementById('mpc_phone').value,
+                address1:          document.getElementById('mpc_address_1').value,
+                address2:          document.getElementById('mpc_address_2').value,
                 deliveryMethod:    document.getElementById('mpc_delivery_method').value,
                 deliveryTiming:    document.getElementById('mpc_delivery_timing').value,
                 timeSlot:          document.getElementById('mpc_time_slot').value,
                 pickupBranch:      document.getElementById('mpc_pickup_branch').value,
                 deliveryZoneCheck: document.getElementById('mpc_delivery_zone_check').checked,
                 allergies:         document.getElementById('mpc_allergies').value,
+                recipientName:     document.getElementById('mpc_recipient_name').value, // NEW RECIPIENT SAVE
                 couponCode:        appliedCoupon.code,
             };
             localStorage.setItem('mpcCheckoutState', JSON.stringify(state));
@@ -1044,6 +1062,7 @@ function mpc_render_checkout_wizard() {
                     if(state.pickupBranch)      document.getElementById('mpc_pickup_branch').value          = state.pickupBranch;
                     if(state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked  = state.deliveryZoneCheck;
                     if(state.allergies)         document.getElementById('mpc_allergies').value              = state.allergies;
+                    if(state.recipientName)     document.getElementById('mpc_recipient_name').value         = state.recipientName; // NEW RECIPIENT LOAD
                     
                     document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
                 } catch(e) {}
@@ -1186,6 +1205,7 @@ function mpc_render_checkout_wizard() {
             formData.append('time_slot',       document.getElementById('mpc_time_slot').value);
             formData.append('pickup_location', document.getElementById('mpc_pickup_branch').value);
             formData.append('allergies',       document.getElementById('mpc_allergies').value);
+            formData.append('recipient_name',  document.getElementById('mpc_recipient_name').value); // NEW RECIPIENT SUBMIT
             formData.append('coupon_code',     appliedCoupon.code);
 
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
