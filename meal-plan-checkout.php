@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.7
+ * Version: 3.8
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.7';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.8';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -187,8 +187,7 @@ function mpc_ajax_validate_coupon() {
 add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
 function mpc_ajax_login() {
     check_ajax_referer('mpc_checkout_nonce', 'nonce');
-    global $wpdb;
-
+    
     $creds = array(
         'user_login'    => sanitize_text_field($_POST['log']),
         'user_password' => $_POST['pwd'],
@@ -200,29 +199,7 @@ function mpc_ajax_login() {
     if ( is_wp_error( $user ) ) {
         wp_send_json_error( $user->get_error_message() );
     } else {
-        $user_id = $user->ID;
-
-        // Native Check: Is this a new subscriber?
-        $paid_plans = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
-            $user_id
-        ) );
-
-        $data = array(
-            'first_name'        => $user->first_name,
-            'last_name'         => $user->last_name,
-            'email'             => $user->user_email,
-            'phone'             => get_user_meta($user_id, 'billing_phone', true),
-            'address_1'         => get_user_meta($user_id, 'billing_address_1', true),
-            'address_2'         => get_user_meta($user_id, 'billing_address_2', true),
-            'delivery_method'   => get_user_meta($user_id, 'delivery_method', true),
-            'delivery_timing'   => get_user_meta($user_id, 'delivery_timing', true),
-            'time_slot'         => get_user_meta($user_id, 'time_slot', true),
-            'pickup_location'   => get_user_meta($user_id, 'pickup_location', true),
-            'new_nonce'         => wp_create_nonce( 'mpc_checkout_nonce' ),
-            'is_new_subscriber' => (intval($paid_plans) === 0)
-        );
-        wp_send_json_success($data);
+        wp_send_json_success();
     }
 }
 
@@ -552,6 +529,43 @@ function mpc_render_checkout_wizard() {
                 <h2 style="margin-top: 0; color: #222;">Choose Your Plan</h2>
                 <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. You will choose your specific daily meals within your flexible quota through the Customer Portal after your subscription is confirmed.</p>
 
+                <!-- LOGIN SECTION AT THE TOP OF STEP 1 -->
+                <?php if ( ! is_user_logged_in() ) : ?>
+                    <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
+                        <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
+                        <div id="mpc-login-form" style="display: none; margin-top: 15px;">
+                            <div class="mpc-form-row">
+                                <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
+                                <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
+                            </div>
+                            <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
+                            <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
+                        </div>
+                    </div>
+                <?php else:
+                    $current_user = wp_get_current_user();
+                    $saved_data   = array(
+                        'first_name'      => $current_user->first_name,
+                        'last_name'       => $current_user->last_name,
+                        'email'           => $current_user->user_email,
+                        'phone'           => get_user_meta($current_user->ID, 'billing_phone', true),
+                        'address_1'       => get_user_meta($current_user->ID, 'billing_address_1', true),
+                        'address_2'       => get_user_meta($current_user->ID, 'billing_address_2', true),
+                        'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true),
+                        'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
+                        'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true),
+                        'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
+                    );
+                ?>
+                    <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
+                        <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
+                        <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
+                            <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Auto-fill my saved delivery details in Step 2
+                        </label>
+                        <script>var mpcSavedDetails = <?php echo json_encode($saved_data); ?>;</script>
+                    </div>
+                <?php endif; ?>
+
                 <?php
                 if ( empty($products) ) {
                     echo '<p>No products found.</p>';
@@ -570,7 +584,7 @@ function mpc_render_checkout_wizard() {
                             preg_match('/(\d+)\s*Meal/i', $title, $m);
                             $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
                             $display_title = str_replace(' - ', ' - <br>', esc_html($title));
-                            echo '<div class="mpc-tile" onclick="mpcSelectPlan(this, \''.esc_attr($title).'\', \''.esc_attr($raw_price).'\', '.$is_juice.', '.$id.', '.$allowed_meals.')">';
+                            echo '<div class="mpc-tile" data-product-id="'.esc_attr($id).'" onclick="mpcSelectPlan(this, \''.esc_attr($title).'\', \''.esc_attr($raw_price).'\', '.$is_juice.', '.$id.', '.$allowed_meals.')">';
                             echo '<div><div class="mpc-tile-title">' . $display_title . '</div>';
                             echo '<div class="mpc-tile-price">' . wp_kses_post($price_html) . '</div></div>';
                             if (!empty($desc)) echo '<div style="font-size: 0.9em; color: #666; margin-top: 10px;">' . wp_kses_post($desc) . '</div>';
@@ -581,45 +595,8 @@ function mpc_render_checkout_wizard() {
                 }
                 ?>
                 
-                <!-- COMBINED LOGIN & COUPON SECTION (HIDDEN UNTIL PLAN SELECTED) -->
-                <div id="mpc-auth-coupon-wrapper" style="display: none; border-top: 1px solid #eee; padding-top: 25px; margin-top: 20px;">
-                    
-                    <?php if ( ! is_user_logged_in() ) : ?>
-                        <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
-                            <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
-                            <div id="mpc-login-form" style="display: none; margin-top: 15px;">
-                                <div class="mpc-form-row">
-                                    <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
-                                    <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
-                                </div>
-                                <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
-                                <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
-                            </div>
-                        </div>
-                    <?php else:
-                        $current_user = wp_get_current_user();
-                        $saved_data   = array(
-                            'first_name'      => $current_user->first_name,
-                            'last_name'       => $current_user->last_name,
-                            'email'           => $current_user->user_email,
-                            'phone'           => get_user_meta($current_user->ID, 'billing_phone', true),
-                            'address_1'       => get_user_meta($current_user->ID, 'billing_address_1', true),
-                            'address_2'       => get_user_meta($current_user->ID, 'billing_address_2', true),
-                            'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true),
-                            'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
-                            'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true),
-                            'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
-                        );
-                    ?>
-                        <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
-                            <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
-                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
-                                <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Auto-fill my saved delivery details in Step 2
-                            </label>
-                            <script>var mpcSavedDetails = <?php echo json_encode($saved_data); ?>;</script>
-                        </div>
-                    <?php endif; ?>
-
+                <!-- COUPON SECTION (HIDDEN UNTIL PLAN SELECTED) -->
+                <div id="mpc-coupon-wrapper" style="display: none; border-top: 1px solid #eee; padding-top: 25px; margin-top: 20px;">
                     <div class="mpc-form-group" id="mpc-coupon-section" style="margin-bottom: 0;">
                         <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
                         <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
@@ -628,7 +605,6 @@ function mpc_render_checkout_wizard() {
                         </div>
                         <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
                     </div>
-
                 </div>
 
                 <div class="mpc-nav-buttons">
@@ -1000,21 +976,13 @@ function mpc_render_checkout_wizard() {
                 .then(res => res.json())
                 .then(response => {
                     if(response.success) {
-                        isUserLoggedIn = true;
-                        isNewSubscriber = response.data.is_new_subscriber; 
+                        msg.style.color = '#16a34a';
+                        msg.innerText = "Success! Loading your details...";
+                        mpcSaveState(); // Securely save the current selected plan if there is one
                         
-                        if (response.data.new_nonce) _mpcFreshNonce = response.data.new_nonce;
-                        document.getElementById('mpc_password_group').style.display = 'none';
-                        
-                        let wHTML = '<div style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">';
-                        wHTML += '<p style="margin: 0; color: #222;"><strong>Welcome back, ' + response.data.first_name + '! Your details have been auto-filled in Step 2.</strong></p>';
-                        wHTML += '</div>';
-                        document.getElementById('mpc-login-section').innerHTML = wHTML;
-                        
-                        // AUTO FILL SEAMLESSLY
-                        populateFields(response.data);
-                        
-                        mpcRenderSummary(); 
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 500);
                     } else {
                         msg.innerText = response.data;
                         this.innerText = btnText; this.disabled = false;
@@ -1026,6 +994,7 @@ function mpc_render_checkout_wizard() {
 
         function mpcSaveState() {
             const state = {
+                productId:         checkoutData.productId,
                 firstName:         document.getElementById('mpc_first_name').value,
                 lastName:          document.getElementById('mpc_last_name').value,
                 email:             document.getElementById('mpc_email').value,
@@ -1038,7 +1007,7 @@ function mpc_render_checkout_wizard() {
                 pickupBranch:      document.getElementById('mpc_pickup_branch').value,
                 deliveryZoneCheck: document.getElementById('mpc_delivery_zone_check').checked,
                 allergies:         document.getElementById('mpc_allergies').value,
-                recipientName:     document.getElementById('mpc_recipient_name').value, // NEW RECIPIENT SAVE
+                recipientName:     document.getElementById('mpc_recipient_name').value,
                 couponCode:        appliedCoupon.code,
             };
             localStorage.setItem('mpcCheckoutState', JSON.stringify(state));
@@ -1068,9 +1037,17 @@ function mpc_render_checkout_wizard() {
                     if(state.pickupBranch)      document.getElementById('mpc_pickup_branch').value          = state.pickupBranch;
                     if(state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked  = state.deliveryZoneCheck;
                     if(state.allergies)         document.getElementById('mpc_allergies').value              = state.allergies;
-                    if(state.recipientName)     document.getElementById('mpc_recipient_name').value         = state.recipientName; // NEW RECIPIENT LOAD
+                    if(state.recipientName)     document.getElementById('mpc_recipient_name').value         = state.recipientName; 
                     
                     document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
+                    
+                    // --- AUTO-RESTORE SELECTED PLAN ON RELOAD ---
+                    if (state.productId) {
+                        let tile = document.querySelector(`.mpc-tile[data-product-id="${state.productId}"]`);
+                        if (tile) {
+                            setTimeout(() => { tile.click(); }, 150);
+                        }
+                    }
                 } catch(e) {}
             }
         });
@@ -1088,12 +1065,12 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc_coupon_input').readOnly = false;
                 document.getElementById('mpc-apply-coupon-btn').style.display = '';
                 document.getElementById('mpc-coupon-feedback').innerText      = '';
-                mpcSaveState();
             }
+            mpcSaveState();
 
-            // --- REVEAL BOTH LOGIN AND COUPON SECTION ---
-            let authCouponWrapper = document.getElementById('mpc-auth-coupon-wrapper');
-            if(authCouponWrapper) authCouponWrapper.style.display = 'block';
+            // --- REVEAL COUPON SECTION AFTER PLAN SELECTED ---
+            let couponWrapper = document.getElementById('mpc-coupon-wrapper');
+            if(couponWrapper) couponWrapper.style.display = 'block';
 
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
@@ -1247,13 +1224,11 @@ add_action( 'woocommerce_order_status_completed',  'mpc_activate_subscription_on
 
 function mpc_activate_subscription_on_payment( $order_id ) {
     global $wpdb;
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $wpdb->update($table_subs, array('status' => 'active'), array('wc_order_id' => $order_id, 'status' => 'pending'));
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';$wpdb->update($table_subs, array('status' => 'active'), array('wc_order_id' =>$order_id, 'status' => 'pending'));
 }
 
 add_action( 'woocommerce_thankyou', 'mpc_add_dashboard_button_to_thankyou', 10, 1 );
-function mpc_add_dashboard_button_to_thankyou( $order_id ) {
-    $portal_url = site_url('/my-meal-portal/');
+function mpc_add_dashboard_button_to_thankyou( $order_id ) {$portal_url = site_url('/my-meal-portal/');
     echo '<div style="margin-top: 40px; padding: 30px; background: #f8fafc; border: 2px solid #379237; border-radius: 8px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">';
     echo '<h3 style="color: #379237; margin-top: 0; font-size: 1.5em;">Your Meal Plan is Ready!</h3>';
     echo '<p style="color: #475569; margin-bottom: 25px; font-size: 1.1em;">Head over to your personal dashboard to start scheduling your meals and tracking your macros.</p>';
@@ -1271,7 +1246,7 @@ add_shortcode( 'meal_plan_customer_profile', 'mpc_render_customer_profile' );
 function mpc_render_customer_profile() {
     if ( ! is_user_logged_in() ) { return ''; }
     $current_user     = wp_get_current_user();
-    $user_id          = $current_user->ID;
+    $user_id          =$current_user->ID;
     $phone            = get_user_meta($user_id, 'billing_phone', true);
     $method           = get_user_meta($user_id, 'delivery_method', true);
     $timing           = get_user_meta($user_id, 'delivery_timing', true);
@@ -1281,23 +1256,22 @@ function mpc_render_customer_profile() {
     $address_1        = get_user_meta($user_id, 'billing_address_1', true);
     $address_2        = get_user_meta($user_id, 'billing_address_2', true);
     $city             = get_user_meta($user_id, 'billing_city', true);
-    $full_address     = array_filter([$address_1, $address_2, $city]);
-    $address_display  = !empty($full_address) ? implode(', ', $full_address) : 'Address not provided';
-    $allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
-    $method_display   = $method ?: 'N/A';
+    $full_address     = array_filter([$address_1, $address_2,$city]);
+    $address_display  = !empty($full_address) ? implode(', ', $full_address) : 'Address not provided';$allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
+    $method_display   =$method ?: 'N/A';
     if ($method === 'Pickup' && !empty($pickup)) $method_display .= ' (' . esc_html($pickup) . ')';
     ob_start();
     ?>
     <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between;">
         <div style="flex: 1; min-width: 250px;">
             <h3 style="margin-top: 0; color: #379237; font-size: 1.3em; margin-bottom: 15px;">Account Details</h3>
-            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Name:</strong> <?php echo esc_html($current_user->first_name . ' ' . $current_user->last_name); ?></p>
+            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Name:</strong> <?php echo esc_html($current_user->first_name . ' ' .$current_user->last_name); ?></p>
             <p style="margin: 0 0 8px 0; color: #334155;"><strong>Email:</strong> <?php echo esc_html($current_user->user_email); ?></p>
             <p style="margin: 0 0 8px 0; color: #334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
             <p style="margin: 0; color: #334155;"><strong>Address:</strong> <?php echo esc_html($address_display); ?></p>
         </div>
         <div style="flex: 1; min-width: 250px; background: #f8fafc; padding: 15px; border-radius: 6px; border: 1px solid #f1f5f9;">
-            <h3 style="margin-top: 0; color: #0f172a; font-size: 1.1em; margin-bottom: 12px;">Active Logistics</h3>
+            <h3 style="margin: 0; color: #0f172a; font-size: 1.1em; margin-bottom: 12px;">Active Logistics</h3>
             <p style="margin: 0 0 8px 0; color: #475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
             <p style="margin: 0 0 8px 0; color: #475569;"><strong>Receive By:</strong> <?php echo esc_html($timing ?: 'N/A'); ?></p>
             <p style="margin: 0 0 8px 0; color: #475569;"><strong>Time Slot:</strong> <?php echo esc_html($time_slot ?: 'N/A'); ?></p>
@@ -1317,38 +1291,35 @@ add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
 function mpc_verify_ngenius_payment_return() {
     if ( is_wc_endpoint_url( 'order-received' ) && isset($_GET['ref']) ) {
         global $wp;
-        $order_id = absint( $wp->query_vars['order-received'] );
-        $order    = wc_get_order( $order_id );
-        if ( ! $order || $order->is_paid() ) return;
+        $order_id = absint($wp->query_vars['order-received'] );
+        $order    = wc_get_order($order_id );
+        if ( ! $order \vert{}\vert{}$order->is_paid() ) return;
 
-        $reference     = sanitize_text_field($_GET['ref']);
-        $main_site_url = 'https://thecyclehub.com';
-        $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
+        $reference     = sanitize_text_field($_GET['ref']);$main_site_url = 'https://thecyclehub.com';
+        $endpoint      =$main_site_url . '/wp-json/bistro-bridge/v1/verify';
 
-        $response = wp_remote_post( $endpoint, array(
+        $response = wp_remote_post($endpoint, array(
             'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => BISTRO_BRIDGE_SECRET ),
             'body'    => wp_json_encode( array('reference' => $reference) ),
             'timeout' => 20,
         ));
 
         if ( is_wp_error( $response ) ) {
-            $order->add_order_note('Bridge Error: ' . $response->get_error_message()); return;
+            $order->add_order_note('Bridge Error: ' .$response->get_error_message()); return;
         }
 
-        $response_code = wp_remote_retrieve_response_code( $response );
-        $body          = json_decode( wp_remote_retrieve_body( $response ), true );
+        $response_code = wp_remote_retrieve_response_code($response );
+        $body          = json_decode( wp_remote_retrieve_body($response ), true );
 
-        if ( $response_code === 200 && isset($body['success']) && $body['success'] === true ) {
-            $state = $body['state'];
-            if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {
-                $order->payment_complete( $reference );
-                $order->add_order_note('Payment captured via N-Genius Bridge. State: ' . $state . ' | Ref: ' . $reference);
+        if ( $response_code === 200 && isset($body['success']) &&$body['success'] === true ) {
+            $state =$body['state'];
+            if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {$order->payment_complete( $reference );$order->add_order_note('Payment captured via N-Genius Bridge. State: ' . $state . ' \vert{} Ref: ' .$reference);
             } else {
                 $order->update_status('failed', 'Payment declined. State: ' . $state);
             }
         } else {
-            $error_msg = isset($body['message']) ? $body['message'] : 'HTTP ' . $response_code;
-            $order->add_order_note('Bridge Verification Failed: ' . $error_msg);
+            $error_msg = isset($body['message']) ? $body['message'] : 'HTTP ' .$response_code;
+            $order->add_order_note('Bridge Verification Failed: ' .$error_msg);
         }
     }
 }
