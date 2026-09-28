@@ -581,13 +581,54 @@ function mpc_render_checkout_wizard() {
                 }
                 ?>
                 
-                <div class="mpc-form-group" id="mpc-coupon-section" style="display: none; border-top: 1px solid #eee; padding-top: 25px; margin-top: 20px;">
-                    <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
-                    <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
-                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
-                        <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn" style="background: #334155; color: #fff; height: 44px; padding: 0 20px; font-size: 0.9em; white-space: nowrap;">Apply Code</button>
+                <!-- COMBINED LOGIN & COUPON SECTION (HIDDEN UNTIL PLAN SELECTED) -->
+                <div id="mpc-auth-coupon-wrapper" style="display: none; border-top: 1px solid #eee; padding-top: 25px; margin-top: 20px;">
+                    
+                    <?php if ( ! is_user_logged_in() ) : ?>
+                        <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
+                            <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
+                            <div id="mpc-login-form" style="display: none; margin-top: 15px;">
+                                <div class="mpc-form-row">
+                                    <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
+                                    <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
+                                </div>
+                                <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
+                                <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
+                            </div>
+                        </div>
+                    <?php else:
+                        $current_user = wp_get_current_user();
+                        $saved_data   = array(
+                            'first_name'      => $current_user->first_name,
+                            'last_name'       => $current_user->last_name,
+                            'email'           => $current_user->user_email,
+                            'phone'           => get_user_meta($current_user->ID, 'billing_phone', true),
+                            'address_1'       => get_user_meta($current_user->ID, 'billing_address_1', true),
+                            'address_2'       => get_user_meta($current_user->ID, 'billing_address_2', true),
+                            'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true),
+                            'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
+                            'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true),
+                            'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
+                        );
+                    ?>
+                        <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
+                            <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
+                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
+                                <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Auto-fill my saved delivery details in Step 2
+                            </label>
+                            <script>var mpcSavedDetails = <?php echo json_encode($saved_data); ?>;</script>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="mpc-form-group" id="mpc-coupon-section" style="margin-bottom: 0;">
+                        <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
+                        <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
+                            <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
+                            <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn" style="background: #334155; color: #fff; height: 44px; padding: 0 20px; font-size: 0.9em; white-space: nowrap;">Apply Code</button>
+                        </div>
+                        <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
                     </div>
-                    <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
+
                 </div>
 
                 <div class="mpc-nav-buttons">
@@ -597,42 +638,6 @@ function mpc_render_checkout_wizard() {
 
             <div id="mpc-step-2" class="mpc-step-content">
                 <h2 style="margin-top: 0; color: #222;">Delivery Information</h2>
-
-                <?php if ( ! is_user_logged_in() ) : ?>
-                    <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
-                        <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
-                        <div id="mpc-login-form" style="display: none; margin-top: 15px;">
-                            <div class="mpc-form-row">
-                                <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
-                                <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
-                            </div>
-                            <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
-                            <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
-                        </div>
-                    </div>
-                <?php else:
-                    $current_user = wp_get_current_user();
-                    $saved_data   = array(
-                        'first_name'      => $current_user->first_name,
-                        'last_name'       => $current_user->last_name,
-                        'email'           => $current_user->user_email,
-                        'phone'           => get_user_meta($current_user->ID, 'billing_phone', true),
-                        'address_1'       => get_user_meta($current_user->ID, 'billing_address_1', true),
-                        'address_2'       => get_user_meta($current_user->ID, 'billing_address_2', true),
-                        'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true),
-                        'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
-                        'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true),
-                        'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
-                    );
-                ?>
-                    <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
-                        <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
-                            <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Use my saved delivery details
-                        </label>
-                        <script>var mpcSavedDetails = <?php echo json_encode($saved_data); ?>;</script>
-                    </div>
-                <?php endif; ?>
 
                 <div class="mpc-form-row">
                     <div class="mpc-form-col mpc-form-group">
@@ -1000,13 +1005,14 @@ function mpc_render_checkout_wizard() {
                         
                         if (response.data.new_nonce) _mpcFreshNonce = response.data.new_nonce;
                         document.getElementById('mpc_password_group').style.display = 'none';
+                        
                         let wHTML = '<div style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">';
-                        wHTML += '<p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, ' + response.data.first_name + '!</strong></p>';
-                        wHTML += '<label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;"><input type="checkbox" id="mpc_use_saved_details_ajax" style="transform: scale(1.2);"> Use my saved delivery details</label></div>';
+                        wHTML += '<p style="margin: 0; color: #222;"><strong>Welcome back, ' + response.data.first_name + '! Your details have been auto-filled in Step 2.</strong></p>';
+                        wHTML += '</div>';
                         document.getElementById('mpc-login-section').innerHTML = wHTML;
-                        document.getElementById('mpc_use_saved_details_ajax').addEventListener('change', function() {
-                            if(this.checked) populateFields(response.data);
-                        });
+                        
+                        // AUTO FILL SEAMLESSLY
+                        populateFields(response.data);
                         
                         mpcRenderSummary(); 
                     } else {
@@ -1085,8 +1091,9 @@ function mpc_render_checkout_wizard() {
                 mpcSaveState();
             }
 
-            // --- SHOW COUPON SECTION NOW THAT A PLAN IS SELECTED ---
-            document.getElementById('mpc-coupon-section').style.display = 'block';
+            // --- REVEAL BOTH LOGIN AND COUPON SECTION ---
+            let authCouponWrapper = document.getElementById('mpc-auth-coupon-wrapper');
+            if(authCouponWrapper) authCouponWrapper.style.display = 'block';
 
             if (isJuice) {
                 document.getElementById('mpc-indicator-meals').style.display = 'none';
