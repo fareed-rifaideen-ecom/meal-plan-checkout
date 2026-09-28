@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.8
+ * Version: 3.9
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.8';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.9';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -51,9 +51,11 @@ function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $u
         $used_by = $coupon->get_used_by();
         $user_id = get_current_user_id();
         $usage_count = 0;
-        foreach ( $used_by as $used ) {
-            if ( ( $user_id > 0 && intval( $used ) === $user_id ) || (is_string($used) && is_string($user_email) && strcasecmp( $used, $user_email ) === 0) ) {
-                $usage_count++;
+        if ( is_array( $used_by ) ) {
+            foreach ( $used_by as $used ) {
+                if ( ( $user_id > 0 && intval( $used ) === $user_id ) || (is_string($used) && is_string($user_email) && strcasecmp( $used, $user_email ) === 0) ) {
+                    $usage_count++;
+                }
             }
         }
         if ( $usage_count >= $usage_limit_per_user ) {
@@ -128,48 +130,53 @@ function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $u
 add_action('wp_ajax_nopriv_mpc_validate_coupon', 'mpc_ajax_validate_coupon');
 add_action('wp_ajax_mpc_validate_coupon',        'mpc_ajax_validate_coupon');
 function mpc_ajax_validate_coupon() {
-    check_ajax_referer( 'mpc_checkout_nonce', 'nonce' );
+    try {
+        check_ajax_referer( 'mpc_checkout_nonce', 'nonce' );
 
-    $code       = strtoupper( sanitize_text_field( $_POST['coupon_code'] ) );
-    $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
-    $user_email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+        $code       = strtoupper( sanitize_text_field( $_POST['coupon_code'] ) );
+        $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
+        $user_email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
 
-    if ( is_user_logged_in() && empty($user_email) ) {
-        $user_email = wp_get_current_user()->user_email;
+        if ( is_user_logged_in() && empty($user_email) ) {
+            $user_email = wp_get_current_user()->user_email;
+        }
+
+        if ( empty( $code ) ) { wp_send_json_error( 'Please enter a coupon code.' ); }
+        if ( empty( $product_id ) ) { wp_send_json_error( 'Please select a meal plan first.' ); }
+
+        $product = wc_get_product($product_id);
+        if ( ! $product ) { wp_send_json_error( 'Invalid meal plan selected.' ); }
+        $price = (float) $product->get_price();
+
+        $coupon = new WC_Coupon( $code );
+        if ( ! $coupon->get_id() ) {
+            wp_send_json_error( 'Invalid coupon code.' );
+        }
+
+        $validation_result = mpc_validate_woocommerce_coupon_rules($coupon, $product_id, $price, $user_email);
+        if ( $validation_result !== true ) {
+            wp_send_json_error( $validation_result );
+        }
+
+        $discount_type = $coupon->get_discount_type();
+        $label = trim( $coupon->get_description() );
+        if ( empty( $label ) ) {
+            $amount_display = ( $discount_type === 'percent' )
+                ? $coupon->get_amount() . '% Off'
+                : 'AED ' . number_format( (float) $coupon->get_amount(), 2 ) . ' Off';
+            $label = ucwords( strtolower( $code ) ) . ' - ' . $amount_display;
+        }
+
+        wp_send_json_success( array(
+            'code'         => $code,
+            'discountType' => $discount_type,
+            'amount'       => (float) $coupon->get_amount(),
+            'label'        => $label,
+        ) );
+        
+    } catch (\Throwable $th) {
+        wp_send_json_error( 'System Error: ' . $th->getMessage() );
     }
-
-    if ( empty( $code ) ) { wp_send_json_error( 'Please enter a coupon code.' ); }
-    if ( empty( $product_id ) ) { wp_send_json_error( 'Please select a meal plan first.' ); }
-
-    $product = wc_get_product($product_id);
-    if ( ! $product ) { wp_send_json_error( 'Invalid meal plan selected.' ); }
-    $price = (float) $product->get_price();
-
-    $coupon = new WC_Coupon( $code );
-    if ( ! $coupon->get_id() ) {
-        wp_send_json_error( 'Invalid coupon code.' );
-    }
-
-    $validation_result = mpc_validate_woocommerce_coupon_rules($coupon, $product_id, $price, $user_email);
-    if ( $validation_result !== true ) {
-        wp_send_json_error( $validation_result );
-    }
-
-    $discount_type = $coupon->get_discount_type();
-    $label = trim( $coupon->get_description() );
-    if ( empty( $label ) ) {
-        $amount_display = ( $discount_type === 'percent' )
-            ? $coupon->get_amount() . '% Off'
-            : 'AED ' . number_format( (float) $coupon->get_amount(), 2 ) . ' Off';
-        $label = ucwords( strtolower( $code ) ) . ' - ' . $amount_display;
-    }
-
-    wp_send_json_success( array(
-        'code'         => $code,
-        'discountType' => $discount_type,
-        'amount'       => (float) $coupon->get_amount(),
-        'label'        => $label,
-    ) );
 }
 
 // ==========================================
@@ -178,20 +185,25 @@ function mpc_ajax_validate_coupon() {
 add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
 add_action('wp_ajax_mpc_login_user',        'mpc_ajax_login'); // Prevents fatal routing error if triggered while logged in
 function mpc_ajax_login() {
-    check_ajax_referer('mpc_checkout_nonce', 'nonce');
+    try {
+        check_ajax_referer('mpc_checkout_nonce', 'nonce');
 
-    $creds = array(
-        'user_login'    => isset($_POST['log']) ? sanitize_text_field($_POST['log']) : '',
-        'user_password' => isset($_POST['pwd']) ? $_POST['pwd'] : '',
-        'remember'      => true
-    );
+        $creds = array(
+            'user_login'    => isset($_POST['log']) ? sanitize_text_field($_POST['log']) : '',
+            'user_password' => isset($_POST['pwd']) ? $_POST['pwd'] : '',
+            'remember'      => true
+        );
 
-    $user = wp_signon( $creds, is_ssl() );
+        $user = wp_signon( $creds, is_ssl() );
 
-    if ( is_wp_error( $user ) ) {
-        wp_send_json_error( $user->get_error_message() );
-    } else {
-        wp_send_json_success();
+        if ( is_wp_error( $user ) ) {
+            wp_send_json_error( $user->get_error_message() );
+        } else {
+            wp_send_json_success();
+        }
+        
+    } catch (\Throwable $th) {
+        wp_send_json_error( 'System Error: ' . $th->getMessage() );
     }
 }
 
@@ -202,255 +214,264 @@ add_action('wp_ajax_nopriv_mpc_process_order', 'mpc_process_order');
 add_action('wp_ajax_mpc_process_order',        'mpc_process_order');
 
 function mpc_process_order() {
-    check_ajax_referer('mpc_checkout_nonce', 'nonce');
-    global $wpdb;
+    try {
+        check_ajax_referer('mpc_checkout_nonce', 'nonce');
+        global $wpdb;
 
-    $product_id      = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
-    $first_name      = isset($_POST['first_name']) ? sanitize_text_field($_POST['first_name']) : '';
-    $last_name       = isset($_POST['last_name']) ? sanitize_text_field($_POST['last_name']) : '';
-    $email           = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
-    $phone           = isset($_POST['phone']) ? sanitize_text_field($_POST['phone']) : '';
-    $password        = isset($_POST['password']) ? $_POST['password'] : '';
-    $address_1       = isset($_POST['address_1']) ? sanitize_text_field($_POST['address_1']) : '';
-    $address_2       = isset($_POST['address_2']) ? sanitize_text_field($_POST['address_2']) : '';
-    $delivery_method = isset($_POST['delivery_method']) ? sanitize_text_field($_POST['delivery_method']) : '';
-    $delivery_timing = isset($_POST['delivery_timing']) ? sanitize_text_field($_POST['delivery_timing']) : '';
-    $time_slot       = isset($_POST['time_slot']) ? sanitize_text_field($_POST['time_slot']) : '';
-    $pickup_location = isset($_POST['pickup_location']) ? sanitize_text_field($_POST['pickup_location']) : '';
-    $allergies       = isset($_POST['allergies']) ? sanitize_textarea_field($_POST['allergies']) : '';
-    $recipient_name  = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : ''; 
-    $coupon_code_raw = isset($_POST['coupon_code']) ? strtoupper( sanitize_text_field($_POST['coupon_code']) ) : '';
+        $product_id      = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
+        $first_name      = isset($_POST['first_name']) ? sanitize_text_field($_POST['first_name']) : '';
+        $last_name       = isset($_POST['last_name']) ? sanitize_text_field($_POST['last_name']) : '';
+        $email           = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+        $phone           = isset($_POST['phone']) ? sanitize_text_field($_POST['phone']) : '';
+        $password        = isset($_POST['password']) ? $_POST['password'] : '';
+        $address_1       = isset($_POST['address_1']) ? sanitize_text_field($_POST['address_1']) : '';
+        $address_2       = isset($_POST['address_2']) ? sanitize_text_field($_POST['address_2']) : '';
+        $delivery_method = isset($_POST['delivery_method']) ? sanitize_text_field($_POST['delivery_method']) : '';
+        $delivery_timing = isset($_POST['delivery_timing']) ? sanitize_text_field($_POST['delivery_timing']) : '';
+        $time_slot       = isset($_POST['time_slot']) ? sanitize_text_field($_POST['time_slot']) : '';
+        $pickup_location = isset($_POST['pickup_location']) ? sanitize_text_field($_POST['pickup_location']) : '';
+        $allergies       = isset($_POST['allergies']) ? sanitize_textarea_field($_POST['allergies']) : '';
+        $recipient_name  = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : ''; 
+        $coupon_code_raw = isset($_POST['coupon_code']) ? strtoupper( sanitize_text_field($_POST['coupon_code']) ) : '';
 
-    if (!$product_id || !$email || !$first_name || !$address_1) {
-        wp_send_json_error('Missing mandatory fields.');
-    }
+        if (!$product_id || !$email || !$first_name || !$address_1) {
+            wp_send_json_error('Missing mandatory fields.');
+        }
 
-    $product = wc_get_product($product_id);
-    if (!$product) {
-        wp_send_json_error('Invalid meal plan selected. Please refresh the page and try again.');
-    }
-    
-    $plan_title = $product->get_name();
+        $product = wc_get_product($product_id);
+        if (!$product) {
+            wp_send_json_error('Invalid meal plan selected. Please refresh the page and try again.');
+        }
+        
+        $plan_title = $product->get_name();
 
-    if (stripos($plan_title, 'juice') !== false || stripos($plan_title, 'cleanse') !== false) {
-        $categories = array('Juices');
-    } else {
-        $categories = array('Breakfast', 'Lunch', 'Dinner', 'Snacks');
-    }
+        if (stripos($plan_title, 'juice') !== false || stripos($plan_title, 'cleanse') !== false) {
+            $categories = array('Juices');
+        } else {
+            $categories = array('Breakfast', 'Lunch', 'Dinner', 'Snacks');
+        }
 
-    // ---- SERVER-SIDE COUPON VALIDATION ----
-    $discount_type   = '';
-    $discount_label  = '';
-    $coupon_used     = '';
-    $is_100_percent_free = false;
+        // ---- SERVER-SIDE COUPON VALIDATION ----
+        $discount_type   = '';
+        $discount_label  = '';
+        $coupon_used     = '';
+        $is_100_percent_free = false;
 
-    if ( ! empty( $coupon_code_raw ) ) {
-        $wc_coupon = new WC_Coupon( $coupon_code_raw );
-        if ( $wc_coupon->get_id() ) {
-            $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, (float)$product->get_price(), $email);
-            
-            if ( $validation_result === true ) {
-                $discount_type  = $wc_coupon->get_discount_type();
-                $coupon_used    = $coupon_code_raw;
-                $label_raw      = trim( $wc_coupon->get_description() );
-                $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
+        if ( ! empty( $coupon_code_raw ) ) {
+            $wc_coupon = new WC_Coupon( $coupon_code_raw );
+            if ( $wc_coupon->get_id() ) {
+                $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, (float)$product->get_price(), $email);
                 
-                if ($discount_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
-                    $is_100_percent_free = true;
+                if ( $validation_result === true ) {
+                    $discount_type  = $wc_coupon->get_discount_type();
+                    $coupon_used    = $coupon_code_raw;
+                    $label_raw      = trim( $wc_coupon->get_description() );
+                    $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
+                    
+                    if ($discount_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
+                        $is_100_percent_free = true;
+                    }
+                } else {
+                    wp_send_json_error( 'Coupon Error: ' . $validation_result );
                 }
             } else {
-                wp_send_json_error( 'Coupon Error: ' . $validation_result );
+                wp_send_json_error( 'Coupon Error: Invalid coupon code.' );
             }
+        }
+
+        // ---- USER CREATION & NEW SUBSCRIBER CHECK ----
+        $user_id = get_current_user_id();
+        $is_new_subscriber = false;
+
+        if (!$user_id) {
+            if (email_exists($email)) {
+                wp_send_json_error('An account with this email already exists. Please scroll up to Step 1 and log in.');
+            }
+            $user_id = wp_create_user($email, $password, $email);
+            if (is_wp_error($user_id)) {
+                wp_send_json_error( $user_id->get_error_message() );
+            }
+            wp_clear_auth_cookie();
+            wp_set_current_user($user_id);
+            wp_set_auth_cookie($user_id, true);
+            
+            $is_new_subscriber = true; 
         } else {
-            wp_send_json_error( 'Coupon Error: Invalid coupon code.' );
+            $paid_plans = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
+                $user_id
+            ) );
+            $is_new_subscriber = (intval($paid_plans) === 0);
         }
-    }
 
-    // ---- USER CREATION & NEW SUBSCRIBER CHECK ----
-    $user_id = get_current_user_id();
-    $is_new_subscriber = false;
+        // --- SAVE USER META ---
+        wp_update_user(array('ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name));
+        update_user_meta($user_id, 'billing_phone',    $phone);
+        update_user_meta($user_id, 'billing_address_1',$address_1);
+        update_user_meta($user_id, 'billing_address_2',$address_2);
+        update_user_meta($user_id, 'billing_city',     'Dubai');
+        update_user_meta($user_id, 'billing_country',  'AE');
+        update_user_meta($user_id, 'delivery_method',  $delivery_method);
+        update_user_meta($user_id, 'delivery_timing',  $delivery_timing);
+        update_user_meta($user_id, 'time_slot',        $time_slot);
+        update_user_meta($user_id, 'pickup_location',  $pickup_location);
+        update_user_meta($user_id, 'allergies',        $allergies);
 
-    if (!$user_id) {
-        if (email_exists($email)) {
-            wp_send_json_error('An account with this email already exists. Please scroll up to Step 1 and log in.');
+        // --- CREATE WOOCOMMERCE ORDER ---
+        $order = wc_create_order(array('customer_id' => $user_id));
+        if ( is_wp_error( $order ) ) {
+            wp_send_json_error( 'Order creation failed: ' . $order->get_error_message() );
         }
-        $user_id = wp_create_user($email, $password, $email);
-        if (is_wp_error($user_id)) {
-            wp_send_json_error( $user_id->get_error_message() );
-        }
-        wp_clear_auth_cookie();
-        wp_set_current_user($user_id);
-        wp_set_auth_cookie($user_id, true);
         
-        $is_new_subscriber = true; 
-    } else {
-        $paid_plans = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
-            $user_id
-        ) );
-        $is_new_subscriber = (intval($paid_plans) === 0);
-    }
+        $order->add_product($product, 1);
 
-    // --- SAVE USER META ---
-    wp_update_user(array('ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name));
-    update_user_meta($user_id, 'billing_phone',    $phone);
-    update_user_meta($user_id, 'billing_address_1',$address_1);
-    update_user_meta($user_id, 'billing_address_2',$address_2);
-    update_user_meta($user_id, 'billing_city',     'Dubai');
-    update_user_meta($user_id, 'billing_country',  'AE');
-    update_user_meta($user_id, 'delivery_method',  $delivery_method);
-    update_user_meta($user_id, 'delivery_timing',  $delivery_timing);
-    update_user_meta($user_id, 'time_slot',        $time_slot);
-    update_user_meta($user_id, 'pickup_location',  $pickup_location);
-    update_user_meta($user_id, 'allergies',        $allergies);
+        $address = array(
+            'first_name' => $first_name, 'last_name' => $last_name,
+            'email'      => $email,      'phone'     => $phone,
+            'address_1'  => $address_1,  'address_2' => $address_2,
+            'city'       => 'Dubai',     'country'   => 'AE',
+        );
+        $order->set_address($address, 'billing');
+        $order->set_address($address, 'shipping');
+        $order->set_customer_note($allergies);
 
-    // --- CREATE WOOCOMMERCE ORDER ---
-    $order = wc_create_order(array('customer_id' => $user_id));
-    $order->add_product($product, 1);
+        $order->update_meta_data('delivery_method',          $delivery_method);
+        $order->update_meta_data('delivery_timing',          $delivery_timing);
+        $order->update_meta_data('time_slot',                $time_slot);
+        $order->update_meta_data('pickup_location',          $pickup_location);
+        $order->update_meta_data('allergies',                $allergies);
+        $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
 
-    $address = array(
-        'first_name' => $first_name, 'last_name' => $last_name,
-        'email'      => $email,      'phone'     => $phone,
-        'address_1'  => $address_1,  'address_2' => $address_2,
-        'city'       => 'Dubai',     'country'   => 'AE',
-    );
-    $order->set_address($address, 'billing');
-    $order->set_address($address, 'shipping');
-    $order->set_customer_note($allergies);
+        // --- APPLY COUPON FEE (IF APPLICABLE) ---
+        if ( ! empty( $coupon_used ) ) {
+            $order->calculate_totals();
+            $subtotal        = $order->get_subtotal();
+            $wc_coupon_obj   = new WC_Coupon( $coupon_used );
+            $discount_amount = 0;
 
-    $order->update_meta_data('delivery_method',          $delivery_method);
-    $order->update_meta_data('delivery_timing',          $delivery_timing);
-    $order->update_meta_data('time_slot',                $time_slot);
-    $order->update_meta_data('pickup_location',          $pickup_location);
-    $order->update_meta_data('allergies',                $allergies);
-    $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
+            if ( $discount_type === 'percent' ) {
+                $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
+            } elseif ( $discount_type === 'fixed_cart' ) {
+                $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
+                if ($discount_amount >= $subtotal) $is_100_percent_free = true;
+            }
 
-    // --- APPLY COUPON FEE (IF APPLICABLE) ---
-    if ( ! empty( $coupon_used ) ) {
+            if ( $discount_amount > 0 ) {
+                $fee = new WC_Order_Item_Fee();
+                $fee->set_name( $discount_label . ' (' . $coupon_used . ')' );
+                $fee->set_amount( -$discount_amount );
+                $fee->set_total( -$discount_amount );
+                $fee->set_tax_status('none');
+                $order->add_item($fee);
+
+                $wc_coupon_obj->increase_usage_count( $email );
+
+                $order->update_meta_data('_mpc_coupon_used',     $coupon_used);
+                $order->update_meta_data('_mpc_discount_type',   $discount_type);
+                $order->update_meta_data('_mpc_discount_amount', $discount_amount);
+            }
+        }
+
+        // --- NATIVE DEPOSIT INJECTION ---
+        if ( $is_new_subscriber && !$is_100_percent_free ) {
+            $deposit_fee = new WC_Order_Item_Fee();
+            $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
+            $deposit_fee->set_amount( 150 );
+            $deposit_fee->set_total( 150 );
+            $deposit_fee->set_tax_status( 'none' );
+            $order->add_item( $deposit_fee );
+        }
+
         $order->calculate_totals();
-        $subtotal        = $order->get_subtotal();
-        $wc_coupon_obj   = new WC_Coupon( $coupon_used );
-        $discount_amount = 0;
+        $order->save();
 
-        if ( $discount_type === 'percent' ) {
-            $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
-        } elseif ( $discount_type === 'fixed_cart' ) {
-            $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
-            if ($discount_amount >= $subtotal) $is_100_percent_free = true;
+        // --- CREATE SUBSCRIPTION RECORD ---
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+
+        $days = 30;
+        if (stripos($plan_title, '7')  !== false) $days = 7;
+        if (stripos($plan_title, '20') !== false) $days = 20;
+        if (stripos($plan_title, '24') !== false) $days = 24;
+        if (stripos($plan_title, '5')  !== false) $days = 5;
+        if (stripos($plan_title, '3')  !== false && stripos($plan_title, 'juice') !== false) $days = 3;
+
+        $final_plan_name = $plan_title;
+        if (!empty($recipient_name)) {
+            $final_plan_name .= ' - ' . $recipient_name;
         }
 
-        if ( $discount_amount > 0 ) {
-            $fee = new WC_Order_Item_Fee();
-            $fee->set_name( $discount_label . ' (' . $coupon_used . ')' );
-            $fee->set_amount( -$discount_amount );
-            $fee->set_total( -$discount_amount );
-            $fee->set_tax_status('none');
-            $order->add_item($fee);
-
-            $wc_coupon_obj->increase_usage_count( $email );
-
-            $order->update_meta_data('_mpc_coupon_used',     $coupon_used);
-            $order->update_meta_data('_mpc_discount_type',   $discount_type);
-            $order->update_meta_data('_mpc_discount_amount', $discount_amount);
-        }
-    }
-
-    // --- NATIVE DEPOSIT INJECTION ---
-    if ( $is_new_subscriber && !$is_100_percent_free ) {
-        $deposit_fee = new WC_Order_Item_Fee();
-        $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
-        $deposit_fee->set_amount( 150 );
-        $deposit_fee->set_total( 150 );
-        $deposit_fee->set_tax_status( 'none' );
-        $order->add_item( $deposit_fee );
-    }
-
-    $order->calculate_totals();
-    $order->save();
-
-    // --- CREATE SUBSCRIPTION RECORD ---
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-
-    $days = 30;
-    if (stripos($plan_title, '7')  !== false) $days = 7;
-    if (stripos($plan_title, '20') !== false) $days = 20;
-    if (stripos($plan_title, '24') !== false) $days = 24;
-    if (stripos($plan_title, '5')  !== false) $days = 5;
-    if (stripos($plan_title, '3')  !== false && stripos($plan_title, 'juice') !== false) $days = 3;
-
-    $final_plan_name = $plan_title;
-    if (!empty($recipient_name)) {
-        $final_plan_name .= ' - ' . $recipient_name;
-    }
-
-    $wpdb->insert($table_subs, array(
-        'user_id'            => $user_id,
-        'wc_order_id'        => $order->get_id(),
-        'plan_name'          => $final_plan_name,
-        'total_days'         => $days,
-        'allowed_categories' => implode(',', $categories),
-        'status'             => 'pending',
-        'start_date'         => date('Y-m-d H:i:s'),
-        'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
-    ));
-
-    // --- VIP 100% FREE BYPASS ---
-    $final_order_total = (float) $order->get_total();
-
-    if ( $final_order_total <= 0 ) {
-        $order->payment_complete();
-        $order->add_order_note('100% Free VIP Coupon applied. Payment gateway bypassed (Internal Manual Entry).');
-
-        $wpdb->update(
-            $table_subs,
-            array('status' => 'active'),
-            array('wc_order_id' => $order->get_id())
-        );
-
-        wp_send_json_success( array( 'payment_url' => esc_url_raw( $order->get_checkout_order_received_url() ) ) );
-    } else {
-        // --- SEND TO N-GENIUS BRIDGE ---
-        $main_site_url = 'https://thecyclehub.com';
-        $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
-
-        $payload = array(
-            'order_id'   => $order->get_id(),
-            'amount'     => $final_order_total,
-            'currency'   => $order->get_currency(),
-            'email'      => $email,
-            'first_name' => $first_name,
-            'last_name'  => $last_name,
-            'return_url' => $order->get_checkout_order_received_url(),
-        );
-
-        $response = wp_remote_post( $endpoint, array(
-            'headers' => array(
-                'Content-Type'   => 'application/json',
-                'x-bistro-token' => BISTRO_BRIDGE_SECRET,
-            ),
-            'body'    => wp_json_encode( $payload ),
-            'timeout' => 20,
+        $wpdb->insert($table_subs, array(
+            'user_id'            => $user_id,
+            'wc_order_id'        => $order->get_id(),
+            'plan_name'          => $final_plan_name,
+            'total_days'         => $days,
+            'allowed_categories' => implode(',', $categories),
+            'status'             => 'pending',
+            'start_date'         => date('Y-m-d H:i:s'),
+            'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
         ));
 
-        if ( is_wp_error( $response ) ) {
-            wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
-        }
+        // --- VIP 100% FREE BYPASS ---
+        $final_order_total = (float) $order->get_total();
 
-        $raw_body = wp_remote_retrieve_body( $response );
-        $body     = json_decode( $raw_body, true );
+        if ( $final_order_total <= 0 ) {
+            $order->payment_complete();
+            $order->add_order_note('100% Free VIP Coupon applied. Payment gateway bypassed (Internal Manual Entry).');
 
-        if ( ! is_array( $body ) ) {
-            wp_send_json_error( 'Gateway Error: Invalid response from payment bridge. Raw: ' . substr( $raw_body, 0, 200 ) );
-        }
+            $wpdb->update(
+                $table_subs,
+                array('status' => 'active'),
+                array('wc_order_id' => $order->get_id())
+            );
 
-        if ( isset( $body['success'] ) && $body['success'] === true ) {
-            $order->update_meta_data( '_ngenius_reference', sanitize_text_field( $body['reference'] ) );
-            $order->save();
-            wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
+            wp_send_json_success( array( 'payment_url' => esc_url_raw( $order->get_checkout_order_received_url() ) ) );
         } else {
-            $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
-            wp_send_json_error( 'Gateway Error: ' . $error_message );
+            // --- SEND TO N-GENIUS BRIDGE ---
+            $main_site_url = 'https://thecyclehub.com';
+            $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
+
+            $payload = array(
+                'order_id'   => $order->get_id(),
+                'amount'     => $final_order_total,
+                'currency'   => $order->get_currency(),
+                'email'      => $email,
+                'first_name' => $first_name,
+                'last_name'  => $last_name,
+                'return_url' => $order->get_checkout_order_received_url(),
+            );
+
+            $response = wp_remote_post( $endpoint, array(
+                'headers' => array(
+                    'Content-Type'   => 'application/json',
+                    'x-bistro-token' => defined('BISTRO_BRIDGE_SECRET') ? BISTRO_BRIDGE_SECRET : '',
+                ),
+                'body'    => wp_json_encode( $payload ),
+                'timeout' => 20,
+            ));
+
+            if ( is_wp_error( $response ) ) {
+                wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
+            }
+
+            $raw_body = wp_remote_retrieve_body( $response );
+            $body     = json_decode( $raw_body, true );
+
+            if ( ! is_array( $body ) ) {
+                wp_send_json_error( 'Gateway Error: Invalid response from payment bridge. Raw: ' . substr( $raw_body, 0, 200 ) );
+            }
+
+            if ( isset( $body['success'] ) && $body['success'] === true ) {
+                $order->update_meta_data( '_ngenius_reference', sanitize_text_field( $body['reference'] ) );
+                $order->save();
+                wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
+            } else {
+                $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
+                wp_send_json_error( 'Gateway Error: ' . $error_message );
+            }
         }
+        
+    } catch (\Throwable $th) {
+        wp_send_json_error( 'System Error: ' . $th->getMessage() );
     }
 }
 
@@ -491,7 +512,6 @@ function mpc_render_checkout_wizard() {
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
     }
 
-    // Determine initial New Subscriber status
     $is_new_subscriber_init = 'true';
     if ( is_user_logged_in() ) {
         $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'", get_current_user_id() ) );
@@ -966,7 +986,7 @@ function mpc_render_checkout_wizard() {
                     if(response.success) {
                         msg.style.color = '#16a34a';
                         msg.innerText = "Success! Reloading your dashboard...";
-                        mpcSaveState(); // Safely save the selected plan before refresh
+                        mpcSaveState(); 
                         
                         setTimeout(() => {
                             window.location.reload();
@@ -976,7 +996,7 @@ function mpc_render_checkout_wizard() {
                         this.innerText = btnText; this.disabled = false;
                     }
                 })
-                .catch(() => { msg.innerText = "Connection error."; this.innerText = btnText; this.disabled = false; });
+                .catch(error => { msg.innerText = "Connection error: " + error.message; this.innerText = btnText; this.disabled = false; });
             });
         }
 
@@ -1046,7 +1066,6 @@ function mpc_render_checkout_wizard() {
             tileElement.classList.add('selected');
             document.getElementById('btn-next-1').disabled = false;
             
-            // Auto-clear coupon if switching plans to ensure validation runs again
             if (appliedCoupon.code) {
                 appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
                 document.getElementById('mpc_coupon_input').value    = '';
@@ -1177,7 +1196,7 @@ function mpc_render_checkout_wizard() {
             formData.append('time_slot',       document.getElementById('mpc_time_slot').value);
             formData.append('pickup_location', document.getElementById('mpc_pickup_branch').value);
             formData.append('allergies',       document.getElementById('mpc_allergies').value);
-            formData.append('recipient_name',  document.getElementById('mpc_recipient_name').value); // NEW RECIPIENT SUBMIT
+            formData.append('recipient_name',  document.getElementById('mpc_recipient_name').value); 
             formData.append('coupon_code',     appliedCoupon.code);
 
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
@@ -1287,7 +1306,7 @@ function mpc_verify_ngenius_payment_return() {
         $endpoint      =$main_site_url . '/wp-json/bistro-bridge/v1/verify';
 
         $response = wp_remote_post($endpoint, array(
-            'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => BISTRO_BRIDGE_SECRET ),
+            'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => defined('BISTRO_BRIDGE_SECRET') ? BISTRO_BRIDGE_SECRET : '' ),
             'body'    => wp_json_encode( array('reference' => $reference) ),
             'timeout' => 20,
         ));
