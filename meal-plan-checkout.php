@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.7
+ * Version: 3.8
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.7';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.8';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -202,11 +202,19 @@ function mpc_ajax_login() {
     } else {
         $user_id = $user->ID;
 
-        // Native Check: Is this a new subscriber?
-        $paid_plans = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
-            $user_id
-        ) );
+        // NEW DEPOSIT WALLET LOGIC WITH GRANDFATHERING
+        $deposit_meta = get_user_meta($user_id, '_cmp_deposit_held', true);
+        if ($deposit_meta === '') {
+            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
+            if (intval($past_plans) > 0) {
+                update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather them in
+                $requires_deposit = false;
+            } else {
+                $requires_deposit = true;
+            }
+        } else {
+            $requires_deposit = ($deposit_meta !== 'yes');
+        }
 
         $data = array(
             'first_name'        => $user->first_name,
@@ -220,7 +228,7 @@ function mpc_ajax_login() {
             'time_slot'         => get_user_meta($user_id, 'time_slot', true),
             'pickup_location'   => get_user_meta($user_id, 'pickup_location', true),
             'new_nonce'         => wp_create_nonce( 'mpc_checkout_nonce' ),
-            'is_new_subscriber' => (intval($paid_plans) === 0)
+            'requires_deposit'  => $requires_deposit
         );
         wp_send_json_success($data);
     }
@@ -296,9 +304,9 @@ function mpc_process_order() {
         }
     }
 
-    // ---- USER CREATION & NEW SUBSCRIBER CHECK ----
+    // ---- USER CREATION & DEPOSIT WALLET LOGIC ----
     $user_id = get_current_user_id();
-    $is_new_subscriber = false;
+    $requires_deposit = false;
 
     if (!$user_id) {
         if (email_exists($email)) {
@@ -312,13 +320,20 @@ function mpc_process_order() {
         wp_set_current_user($user_id);
         wp_set_auth_cookie($user_id, true);
         
-        $is_new_subscriber = true; // Brand new account = guaranteed new subscriber
+        $requires_deposit = true; // Brand new accounts always require the deposit
     } else {
-        $paid_plans = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'",
-            $user_id
-        ) );
-        $is_new_subscriber = (intval($paid_plans) === 0);
+        $deposit_meta = get_user_meta($user_id, '_cmp_deposit_held', true);
+        if ($deposit_meta === '') {
+            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
+            if (intval($past_plans) > 0) {
+                update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather
+                $requires_deposit = false;
+            } else {
+                $requires_deposit = true;
+            }
+        } else {
+            $requires_deposit = ($deposit_meta !== 'yes');
+        }
     }
 
     // --- SAVE USER META ---
@@ -386,8 +401,8 @@ function mpc_process_order() {
         }
     }
 
-    // --- NATIVE DEPOSIT INJECTION ---
-    if ( $is_new_subscriber && !$is_100_percent_free ) {
+    // --- NATIVE DEPOSIT INJECTION BASED ON NEW TAG LOGIC ---
+    if ( $requires_deposit && !$is_100_percent_free ) {
         $deposit_fee = new WC_Order_Item_Fee();
         $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
         $deposit_fee->set_amount( 150 );
@@ -528,12 +543,19 @@ function mpc_render_checkout_wizard() {
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
     }
 
-    // Determine initial New Subscriber status
-    $is_new_subscriber_init = 'true';
+    // DETERMINE DEPOSIT REQUIREMENT ON LOAD
+    $requires_deposit_init = 'true';
     if ( is_user_logged_in() ) {
-        $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status = 'active'", get_current_user_id() ) );
-        if ( intval($count) > 0 ) {
-            $is_new_subscriber_init = 'false';
+        $uid = get_current_user_id();
+        $deposit_meta = get_user_meta($uid, '_cmp_deposit_held', true);
+        if ($deposit_meta === '') {
+            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $uid));
+            if (intval($past_plans) > 0) {
+                $requires_deposit_init = 'false';
+                update_user_meta($uid, '_cmp_deposit_held', 'yes'); // Grandfather
+            }
+        } else if ($deposit_meta === 'yes') {
+            $requires_deposit_init = 'false';
         }
     }
 
@@ -787,7 +809,8 @@ function mpc_render_checkout_wizard() {
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         
         let isUserLoggedIn  = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
-        let isNewSubscriber = <?php echo $is_new_subscriber_init; ?>;
+        // NEW: Deposit variable explicitly maps to backend logic
+        let requiresDeposit = <?php echo $requires_deposit_init; ?>;
         
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
@@ -827,7 +850,7 @@ function mpc_render_checkout_wizard() {
             let discountedPrice = basePrice - discountAmt;
             
             // Core Deposit Logic: Waive if returning customer OR if they have a 100% free VIP code!
-            let depositAmt = (isNewSubscriber && !is100PercentFree) ? 150 : 0;
+            let depositAmt = (requiresDeposit && !is100PercentFree) ? 150 : 0;
             
             let newTotal = discountedPrice + depositAmt;
 
@@ -845,7 +868,9 @@ function mpc_render_checkout_wizard() {
             if (depositAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
                 html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Click support/WhatsApp if you are an existing cutomer.</div>`;
-            } else if (isNewSubscriber && is100PercentFree) {
+            } else if (!requiresDeposit && !is100PercentFree) {
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (Account Held)</strong></div>`;
+            } else if (requiresDeposit && is100PercentFree) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (100% Free)</strong></div>`;
             }
 
@@ -996,7 +1021,7 @@ function mpc_render_checkout_wizard() {
                 .then(response => {
                     if(response.success) {
                         isUserLoggedIn = true;
-                        isNewSubscriber = response.data.is_new_subscriber; 
+                        requiresDeposit = response.data.requires_deposit; 
                         
                         if (response.data.new_nonce) _mpcFreshNonce = response.data.new_nonce;
                         document.getElementById('mpc_password_group').style.display = 'none';
@@ -1107,7 +1132,7 @@ function mpc_render_checkout_wizard() {
             
             setTimeout(function() {
                 let nextBtn = document.getElementById('btn-next-1');
-                if (nextBtn) { window.scrollTo({ top: nextBtn.getBoundingClientRect().top + window.scrollY - 150, behavior: 'smooth' }); }
+                if (nextBtn) { window.scrollTo({ top: nextBtn.getBoundingClientRect().top - 150, behavior: 'smooth' }); }
             }, 250);
         }
 
@@ -1242,6 +1267,17 @@ function mpc_activate_subscription_on_payment( $order_id ) {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $wpdb->update($table_subs, array('status' => 'active'), array('wc_order_id' => $order_id, 'status' => 'pending'));
+
+    // NEW DEPOSIT TAG APPLIED ONLY AFTER PAYMENT
+    $order = wc_get_order($order_id);
+    if ($order) {
+        foreach ($order->get_items('fee') as $item) {
+            if (strpos($item->get_name(), 'Thermal Bag Deposit') !== false) {
+                update_user_meta($order->get_customer_id(), '_cmp_deposit_held', 'yes');
+                break;
+            }
+        }
+    }
 }
 
 add_action( 'woocommerce_thankyou', 'mpc_add_dashboard_button_to_thankyou', 10, 1 );
