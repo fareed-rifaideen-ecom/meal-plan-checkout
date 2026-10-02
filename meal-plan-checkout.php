@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.9
+ * Version: 4.0
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.9';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '4.0';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -144,7 +144,24 @@ function mpc_ajax_validate_coupon() {
 }
 
 // ==========================================
-// 5. AJAX: SECURE USER LOGIN
+// 5. AJAX: VIP MAGIC LINK LIVE VALIDATOR
+// ==========================================
+add_action('wp_ajax_nopriv_mpc_validate_vip_token', 'mpc_ajax_validate_vip_token');
+add_action('wp_ajax_mpc_validate_vip_token',        'mpc_ajax_validate_vip_token');
+function mpc_ajax_validate_vip_token() {
+    $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
+    if (empty($token)) { wp_send_json_error(); }
+    
+    $active_links = get_option('cmp_active_magic_links', array());
+    if (isset($active_links[$token])) {
+        wp_send_json_success();
+    } else {
+        wp_send_json_error();
+    }
+}
+
+// ==========================================
+// 6. AJAX: SECURE USER LOGIN
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
 function mpc_ajax_login() {
@@ -199,7 +216,7 @@ function mpc_ajax_login() {
 }
 
 // ==========================================
-// 6. AJAX: ORDER PROCESSING
+// 7. AJAX: ORDER PROCESSING
 // ==========================================
 add_action('wp_ajax_nopriv_mpc_process_order', 'mpc_process_order');
 add_action('wp_ajax_mpc_process_order',        'mpc_process_order');
@@ -475,7 +492,7 @@ function mpc_process_order() {
 }
 
 // ==========================================
-// 7. FRONTEND WIZARD RENDERER
+// 8. FRONTEND WIZARD RENDERER
 // ==========================================
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
@@ -511,23 +528,11 @@ function mpc_render_checkout_wizard() {
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
     }
 
-    // --- MAGIC LINK CHECK ---
-    $vip_token = isset($_GET['vip_token']) ? sanitize_text_field($_GET['vip_token']) : '';
-    $is_valid_vip_token = false;
-    if (!empty($vip_token)) {
-        $active_links = get_option('cmp_active_magic_links', array());
-        if (isset($active_links[$vip_token])) {
-            $is_valid_vip_token = true;
-        }
-    }
-
-    // DETERMINE DEPOSIT REQUIREMENT ON LOAD
+    // DETERMINE DEPOSIT REQUIREMENT ON LOAD (Default Fallback)
     $requires_deposit_init = 'true';
     $deposit_meta_init = '';
     
-    if ($is_valid_vip_token) {
-        $requires_deposit_init = 'false';
-    } else if ( is_user_logged_in() ) {
+    if ( is_user_logged_in() ) {
         $uid = get_current_user_id();
         $deposit_meta_init = get_user_meta($uid, '_cmp_deposit_held', true);
         
@@ -797,7 +802,7 @@ function mpc_render_checkout_wizard() {
         // DEPOSIT LOGIC & MAGIC LINK VARS
         let requiresDeposit   = <?php echo $requires_deposit_init; ?>;
         let userDepositStatus = '<?php echo esc_js($deposit_meta_init); ?>';
-        let activeVipToken    = '<?php echo $is_valid_vip_token ? esc_js($vip_token) : ""; ?>';
+        let activeVipToken    = '';
         
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
@@ -812,6 +817,30 @@ function mpc_render_checkout_wizard() {
                 _mpcFreshNonce = response.data.nonce;
             }
         });
+
+        // LIVE VIP TOKEN VALIDATION (Bypasses Page Cache)
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlToken = urlParams.get('vip_token');
+
+        if (urlToken) {
+            let formData = new URLSearchParams();
+            formData.append('action', 'mpc_validate_vip_token');
+            formData.append('token', urlToken);
+
+            fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(response => {
+                if (response.success) {
+                    activeVipToken = urlToken;
+                    requiresDeposit = false;
+                    mpcRenderSummary();
+                } else {
+                    alert("This VIP link is invalid. It may have expired, been used already, or been revoked by the FOH team.");
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                    mpcRenderSummary();
+                }
+            });
+        }
 
         // ---- NATIVE MATH SUMMARY UI ----
         function mpcRenderSummary() {
