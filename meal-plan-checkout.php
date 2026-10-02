@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 3.8
+ * Version: 3.9
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '3.8';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '3.9';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -36,19 +36,12 @@ function mpc_get_fresh_nonce() {
 // 3. HELPER: STRICT WOOCOMMERCE COUPON VALIDATION
 // ==========================================
 function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $user_email ) {
-    // 1. Expiry date check
     $expiry = $coupon->get_date_expires();
-    if ( $expiry && $expiry->getTimestamp() < time() ) {
-        return 'This coupon has expired.';
-    }
+    if ( $expiry && $expiry->getTimestamp() < time() ) { return 'This coupon has expired.'; }
 
-    // 2. Usage limit check
     $usage_limit = $coupon->get_usage_limit();
-    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) {
-        return 'This coupon has reached its global usage limit.';
-    }
+    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) { return 'This coupon has reached its global usage limit.'; }
 
-    // 3. Usage limit per user
     $usage_limit_per_user = $coupon->get_usage_limit_per_user();
     if ( $usage_limit_per_user > 0 ) {
         $used_by = $coupon->get_used_by();
@@ -59,72 +52,41 @@ function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $u
                 $usage_count++;
             }
         }
-        if ( $usage_count >= $usage_limit_per_user ) {
-            return 'You have already reached the usage limit for this coupon.';
-        }
+        if ( $usage_count >= $usage_limit_per_user ) { return 'You have already reached the usage limit for this coupon.'; }
     }
 
-    // 4. Supported types
     $discount_type = $coupon->get_discount_type();
-    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) {
-        return 'This coupon type is not supported in the custom checkout.';
-    }
+    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) { return 'This coupon type is not supported in the custom checkout.'; }
 
-    // 5. Min / Max Spend limits
     $min_spend = $coupon->get_minimum_amount();
-    if ( $min_spend > 0 && $price < $min_spend ) {
-        return 'Minimum spend for this coupon is AED ' . $min_spend;
-    }
+    if ( $min_spend > 0 && $price < $min_spend ) { return 'Minimum spend for this coupon is AED ' . $min_spend; }
 
     $max_spend = $coupon->get_maximum_amount();
-    if ( $max_spend > 0 && $price > $max_spend ) {
-        return 'Maximum spend for this coupon is AED ' . $max_spend;
-    }
+    if ( $max_spend > 0 && $price > $max_spend ) { return 'Maximum spend for this coupon is AED ' . $max_spend; }
 
-    // 6. Specific Product Restrictions
     $valid_products = $coupon->get_product_ids();
-    if ( ! empty( $valid_products ) && ! in_array( $product_id, $valid_products ) ) {
-        return 'This coupon is not applicable to the selected plan.';
-    }
+    if ( ! empty( $valid_products ) && ! in_array( $product_id, $valid_products ) ) { return 'This coupon is not applicable to the selected plan.'; }
 
-    // 7. Excluded Products
     $excluded_products = $coupon->get_excluded_product_ids();
-    if ( ! empty( $excluded_products ) && in_array( $product_id, $excluded_products ) ) {
-        return 'The selected plan is excluded from this coupon.';
-    }
+    if ( ! empty( $excluded_products ) && in_array( $product_id, $excluded_products ) ) { return 'The selected plan is excluded from this coupon.'; }
 
-    // 8. Product Categories
     $valid_categories = $coupon->get_product_categories();
     $excluded_categories = $coupon->get_excluded_product_categories();
     if ( ! empty( $valid_categories ) || ! empty( $excluded_categories ) ) {
         $product_cats = wc_get_product_term_ids( $product_id, 'product_cat' );
-        
-        if ( ! empty( $valid_categories ) && count( array_intersect( $valid_categories, $product_cats ) ) === 0 ) {
-            return 'This coupon is not applicable to this plan category.';
-        }
-        
-        if ( ! empty( $excluded_categories ) && count( array_intersect( $excluded_categories, $product_cats ) ) > 0 ) {
-            return 'This plan category is excluded from this coupon.';
-        }
+        if ( ! empty( $valid_categories ) && count( array_intersect( $valid_categories, $product_cats ) ) === 0 ) { return 'This coupon is not applicable to this plan category.'; }
+        if ( ! empty( $excluded_categories ) && count( array_intersect( $excluded_categories, $product_cats ) ) > 0 ) { return 'This plan category is excluded from this coupon.'; }
     }
 
-    // 9. Email Restrictions (Supports wildcard matches like *@example.com)
     $restricted_emails = $coupon->get_email_restrictions();
     if ( ! empty( $restricted_emails ) ) {
-        if ( empty( $user_email ) ) {
-            return 'This coupon is restricted. Please log in, or proceed to Step 2 to enter your email before applying.';
-        }
+        if ( empty( $user_email ) ) { return 'This coupon is restricted. Please log in, or proceed to Step 2 to enter your email before applying.'; }
         $email_valid = false;
         foreach ( $restricted_emails as $restricted_email ) {
             $regex = '/^' . str_replace( '\*', '.*', preg_quote( $restricted_email, '/' ) ) . '$/i';
-            if ( preg_match( $regex, $user_email ) ) {
-                $email_valid = true;
-                break;
-            }
+            if ( preg_match( $regex, $user_email ) ) { $email_valid = true; break; }
         }
-        if ( ! $email_valid ) {
-            return 'This coupon is not valid for your email address.';
-        }
+        if ( ! $email_valid ) { return 'This coupon is not valid for your email address.'; }
     }
 
     return true; // All rules passed
@@ -202,18 +164,19 @@ function mpc_ajax_login() {
     } else {
         $user_id = $user->ID;
 
-        // NEW DEPOSIT WALLET LOGIC WITH GRANDFATHERING
+        // DEPOSIT WALLET LOGIC WITH "OWN BAG" THIRD STATE
         $deposit_meta = get_user_meta($user_id, '_cmp_deposit_held', true);
         if ($deposit_meta === '') {
             $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
             if (intval($past_plans) > 0) {
                 update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather them in
+                $deposit_meta = 'yes';
                 $requires_deposit = false;
             } else {
                 $requires_deposit = true;
             }
         } else {
-            $requires_deposit = ($deposit_meta !== 'yes');
+            $requires_deposit = ($deposit_meta !== 'yes' && $deposit_meta !== 'own_bag');
         }
 
         $data = array(
@@ -228,7 +191,8 @@ function mpc_ajax_login() {
             'time_slot'         => get_user_meta($user_id, 'time_slot', true),
             'pickup_location'   => get_user_meta($user_id, 'pickup_location', true),
             'new_nonce'         => wp_create_nonce( 'mpc_checkout_nonce' ),
-            'requires_deposit'  => $requires_deposit
+            'requires_deposit'  => $requires_deposit,
+            'deposit_status'    => $deposit_meta
         );
         wp_send_json_success($data);
     }
@@ -257,7 +221,7 @@ function mpc_process_order() {
     $time_slot       = sanitize_text_field($_POST['time_slot']);
     $pickup_location = isset($_POST['pickup_location']) ? sanitize_text_field($_POST['pickup_location']) : '';
     $allergies       = sanitize_textarea_field($_POST['allergies']);
-    $recipient_name  = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : ''; // NEW RECIPIENT NAME
+    $recipient_name  = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : ''; 
     $coupon_code_raw = isset($_POST['coupon_code']) ? strtoupper( sanitize_text_field($_POST['coupon_code']) ) : '';
 
     if (!$product_id || !$email || !$first_name || !$address_1) {
@@ -273,6 +237,19 @@ function mpc_process_order() {
         $categories = array('Breakfast', 'Lunch', 'Dinner', 'Snacks');
     }
 
+    // ---- MAGIC LINK: OWN BAG TOKEN CHECK ----
+    $vip_token = isset($_POST['vip_token']) ? sanitize_text_field($_POST['vip_token']) : '';
+    $is_own_bag_token = false;
+
+    if ( ! empty($vip_token) ) {
+        $active_links = get_option('cmp_active_magic_links', array());
+        if (isset($active_links[$vip_token])) {
+            $is_own_bag_token = true;
+            unset($active_links[$vip_token]); // Immediately destroy token to prevent multi-use
+            update_option('cmp_active_magic_links', $active_links);
+        }
+    }
+
     // ---- SERVER-SIDE COUPON VALIDATION ----
     $discount_type   = '';
     $discount_label  = '';
@@ -282,31 +259,24 @@ function mpc_process_order() {
     if ( ! empty( $coupon_code_raw ) ) {
         $wc_coupon = new WC_Coupon( $coupon_code_raw );
         if ( $wc_coupon->get_id() ) {
-            
-            // Re-run strict rules before allowing payment to process
             $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, (float)$product->get_price(), $email);
-            
             if ( $validation_result === true ) {
                 $discount_type  = $wc_coupon->get_discount_type();
                 $coupon_used    = $coupon_code_raw;
                 $label_raw      = trim( $wc_coupon->get_description() );
                 $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
                 
-                // VIP 100% Free Interceptor
                 if ($discount_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
                     $is_100_percent_free = true;
                 }
-            } else {
-                wp_send_json_error( 'Coupon Error: ' . $validation_result );
-            }
-        } else {
-            wp_send_json_error( 'Coupon Error: Invalid coupon code.' );
-        }
+            } else { wp_send_json_error( 'Coupon Error: ' . $validation_result ); }
+        } else { wp_send_json_error( 'Coupon Error: Invalid coupon code.' ); }
     }
 
     // ---- USER CREATION & DEPOSIT WALLET LOGIC ----
     $user_id = get_current_user_id();
     $requires_deposit = false;
+    $deposit_meta = '';
 
     if (!$user_id) {
         if (email_exists($email)) {
@@ -320,19 +290,24 @@ function mpc_process_order() {
         wp_set_current_user($user_id);
         wp_set_auth_cookie($user_id, true);
         
-        $requires_deposit = true; // Brand new accounts always require the deposit
+        $requires_deposit = !$is_own_bag_token; // Force deposit unless they used a valid VIP Magic Link
     } else {
         $deposit_meta = get_user_meta($user_id, '_cmp_deposit_held', true);
-        if ($deposit_meta === '') {
-            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
-            if (intval($past_plans) > 0) {
-                update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather
-                $requires_deposit = false;
-            } else {
-                $requires_deposit = true;
-            }
+        if ($is_own_bag_token) {
+            $requires_deposit = false; // Magic Link overrides
         } else {
-            $requires_deposit = ($deposit_meta !== 'yes');
+            if ($deposit_meta === '') {
+                $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
+                if (intval($past_plans) > 0) {
+                    update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather
+                    $requires_deposit = false;
+                    $deposit_meta = 'yes';
+                } else {
+                    $requires_deposit = true;
+                }
+            } else {
+                $requires_deposit = ($deposit_meta !== 'yes' && $deposit_meta !== 'own_bag');
+            }
         }
     }
 
@@ -370,6 +345,12 @@ function mpc_process_order() {
     $order->update_meta_data('allergies',                $allergies);
     $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
 
+    // Logistics Note for Own Bag
+    if ($is_own_bag_token || $deposit_meta === 'own_bag') {
+        update_user_meta($user_id, '_cmp_deposit_held', 'own_bag'); // Lock status to Profile
+        $order->add_order_note('Logistics Alert: Customer is using their OWN BAG. Do not issue a new thermal bag.');
+    }
+
     // --- APPLY COUPON FEE (IF APPLICABLE) ---
     if ( ! empty( $coupon_used ) ) {
         $order->calculate_totals();
@@ -381,7 +362,6 @@ function mpc_process_order() {
             $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
         } elseif ( $discount_type === 'fixed_cart' ) {
             $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
-            // Secondary VIP catch for Fixed Cart covering full subtotal
             if ($discount_amount >= $subtotal) $is_100_percent_free = true;
         }
 
@@ -401,7 +381,7 @@ function mpc_process_order() {
         }
     }
 
-    // --- NATIVE DEPOSIT INJECTION BASED ON NEW TAG LOGIC ---
+    // --- NATIVE DEPOSIT INJECTION ---
     if ( $requires_deposit && !$is_100_percent_free ) {
         $deposit_fee = new WC_Order_Item_Fee();
         $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
@@ -411,7 +391,6 @@ function mpc_process_order() {
         $order->add_item( $deposit_fee );
     }
 
-    // Finalize Math
     $order->calculate_totals();
     $order->save();
 
@@ -425,16 +404,13 @@ function mpc_process_order() {
     if (stripos($plan_title, '5')  !== false) $days = 5;
     if (stripos($plan_title, '3')  !== false && stripos($plan_title, 'juice') !== false) $days = 3;
 
-    // --- APPEND RECIPIENT NAME FOR DB ---
     $final_plan_name = $plan_title;
-    if (!empty($recipient_name)) {
-        $final_plan_name .= ' - ' . $recipient_name;
-    }
+    if (!empty($recipient_name)) { $final_plan_name .= ' - ' . $recipient_name; }
 
     $wpdb->insert($table_subs, array(
         'user_id'            => $user_id,
         'wc_order_id'        => $order->get_id(),
-        'plan_name'          => $final_plan_name, // Now includes recipient name
+        'plan_name'          => $final_plan_name,
         'total_days'         => $days,
         'allowed_categories' => implode(',', $categories),
         'status'             => 'pending',
@@ -443,22 +419,17 @@ function mpc_process_order() {
     ));
 
     // --- VIP 100% FREE BYPASS ---
-    // If the order total is 0 (Internal Cash Payment), skip the gateway!
     $final_order_total = (float) $order->get_total();
 
     if ( $final_order_total <= 0 ) {
-        // Mark Order as Processed
         $order->payment_complete();
         $order->add_order_note('100% Free VIP Coupon applied. Payment gateway bypassed (Internal Manual Entry).');
 
-        // Immediately Activate the Subscription Database Record
         $wpdb->update(
             $table_subs,
             array('status' => 'active'),
             array('wc_order_id' => $order->get_id())
         );
-
-        // Redirect directly to the native WooCommerce success page
         wp_send_json_success( array( 'payment_url' => esc_url_raw( $order->get_checkout_order_received_url() ) ) );
     } else {
         // --- SEND TO N-GENIUS BRIDGE ---
@@ -476,10 +447,7 @@ function mpc_process_order() {
         );
 
         $response = wp_remote_post( $endpoint, array(
-            'headers' => array(
-                'Content-Type'   => 'application/json',
-                'x-bistro-token' => BISTRO_BRIDGE_SECRET,
-            ),
+            'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => BISTRO_BRIDGE_SECRET ),
             'body'    => wp_json_encode( $payload ),
             'timeout' => 20,
         ));
@@ -492,7 +460,7 @@ function mpc_process_order() {
         $body     = json_decode( $raw_body, true );
 
         if ( ! is_array( $body ) ) {
-            wp_send_json_error( 'Gateway Error: Invalid response from payment bridge. Raw: ' . substr( $raw_body, 0, 200 ) );
+            wp_send_json_error( 'Gateway Error: Invalid response from payment bridge.' );
         }
 
         if ( isset( $body['success'] ) && $body['success'] === true ) {
@@ -500,7 +468,7 @@ function mpc_process_order() {
             $order->save();
             wp_send_json_success( array( 'payment_url' => esc_url_raw( $body['payment_url'] ) ) );
         } else {
-            $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link from the main website.';
+            $error_message = isset( $body['message'] ) ? $body['message'] : 'Failed to retrieve payment link.';
             wp_send_json_error( 'Gateway Error: ' . $error_message );
         }
     }
@@ -543,18 +511,34 @@ function mpc_render_checkout_wizard() {
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
     }
 
+    // --- MAGIC LINK CHECK ---
+    $vip_token = isset($_GET['vip_token']) ? sanitize_text_field($_GET['vip_token']) : '';
+    $is_valid_vip_token = false;
+    if (!empty($vip_token)) {
+        $active_links = get_option('cmp_active_magic_links', array());
+        if (isset($active_links[$vip_token])) {
+            $is_valid_vip_token = true;
+        }
+    }
+
     // DETERMINE DEPOSIT REQUIREMENT ON LOAD
     $requires_deposit_init = 'true';
-    if ( is_user_logged_in() ) {
+    $deposit_meta_init = '';
+    
+    if ($is_valid_vip_token) {
+        $requires_deposit_init = 'false';
+    } else if ( is_user_logged_in() ) {
         $uid = get_current_user_id();
-        $deposit_meta = get_user_meta($uid, '_cmp_deposit_held', true);
-        if ($deposit_meta === '') {
+        $deposit_meta_init = get_user_meta($uid, '_cmp_deposit_held', true);
+        
+        if ($deposit_meta_init === '') {
             $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $uid));
             if (intval($past_plans) > 0) {
                 $requires_deposit_init = 'false';
+                $deposit_meta_init = 'yes';
                 update_user_meta($uid, '_cmp_deposit_held', 'yes'); // Grandfather
             }
-        } else if ($deposit_meta === 'yes') {
+        } else if ($deposit_meta_init === 'yes' || $deposit_meta_init === 'own_bag') {
             $requires_deposit_init = 'false';
         }
     }
@@ -809,8 +793,11 @@ function mpc_render_checkout_wizard() {
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         
         let isUserLoggedIn  = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
-        // NEW: Deposit variable explicitly maps to backend logic
-        let requiresDeposit = <?php echo $requires_deposit_init; ?>;
+        
+        // DEPOSIT LOGIC & MAGIC LINK VARS
+        let requiresDeposit   = <?php echo $requires_deposit_init; ?>;
+        let userDepositStatus = '<?php echo esc_js($deposit_meta_init); ?>';
+        let activeVipToken    = '<?php echo $is_valid_vip_token ? esc_js($vip_token) : ""; ?>';
         
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
@@ -849,9 +836,8 @@ function mpc_render_checkout_wizard() {
 
             let discountedPrice = basePrice - discountAmt;
             
-            // Core Deposit Logic: Waive if returning customer OR if they have a 100% free VIP code!
+            // Core Deposit Logic
             let depositAmt = (requiresDeposit && !is100PercentFree) ? 150 : 0;
-            
             let newTotal = discountedPrice + depositAmt;
 
             let html = `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${checkoutData.planName}</span></div>`;
@@ -868,6 +854,8 @@ function mpc_render_checkout_wizard() {
             if (depositAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
                 html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Click support/WhatsApp if you are an existing cutomer.</div>`;
+            } else if (activeVipToken !== '' || userDepositStatus === 'own_bag') {
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #8b5cf6;"><span>Thermal Bag Deposit:</span> <strong>Waived (Customer's Own Bag)</strong></div>`;
             } else if (!requiresDeposit && !is100PercentFree) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (Account Held)</strong></div>`;
             } else if (requiresDeposit && is100PercentFree) {
@@ -1022,6 +1010,7 @@ function mpc_render_checkout_wizard() {
                     if(response.success) {
                         isUserLoggedIn = true;
                         requiresDeposit = response.data.requires_deposit; 
+                        userDepositStatus = response.data.deposit_status;
                         
                         if (response.data.new_nonce) _mpcFreshNonce = response.data.new_nonce;
                         document.getElementById('mpc_password_group').style.display = 'none';
@@ -1230,8 +1219,9 @@ function mpc_render_checkout_wizard() {
             formData.append('time_slot',       document.getElementById('mpc_time_slot').value);
             formData.append('pickup_location', document.getElementById('mpc_pickup_branch').value);
             formData.append('allergies',       document.getElementById('mpc_allergies').value);
-            formData.append('recipient_name',  document.getElementById('mpc_recipient_name').value); // NEW RECIPIENT SUBMIT
+            formData.append('recipient_name',  document.getElementById('mpc_recipient_name').value);
             formData.append('coupon_code',     appliedCoupon.code);
+            formData.append('vip_token',       activeVipToken); // ADD MAGIC LINK TOKEN
 
             fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
@@ -1271,10 +1261,15 @@ function mpc_activate_subscription_on_payment( $order_id ) {
     // NEW DEPOSIT TAG APPLIED ONLY AFTER PAYMENT
     $order = wc_get_order($order_id);
     if ($order) {
-        foreach ($order->get_items('fee') as $item) {
-            if (strpos($item->get_name(), 'Thermal Bag Deposit') !== false) {
-                update_user_meta($order->get_customer_id(), '_cmp_deposit_held', 'yes');
-                break;
+        $customer_id = $order->get_customer_id();
+        // Do not overwrite "own_bag" if it was already applied during checkout via Magic Link
+        $current_meta = get_user_meta($customer_id, '_cmp_deposit_held', true);
+        if ($current_meta !== 'own_bag') {
+            foreach ($order->get_items('fee') as $item) {
+                if (strpos($item->get_name(), 'Thermal Bag Deposit') !== false) {
+                    update_user_meta($customer_id, '_cmp_deposit_held', 'yes');
+                    break;
+                }
             }
         }
     }
