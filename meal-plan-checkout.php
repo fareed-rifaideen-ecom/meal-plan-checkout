@@ -3,7 +3,7 @@
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 4.0
+ * Version: 4.1
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -18,7 +18,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '4.0';
+        $version  = file_exists($css_file) ? filemtime($css_file) : '4.1';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -245,8 +245,9 @@ function mpc_process_order() {
         wp_send_json_error('Missing mandatory fields.');
     }
 
-    $product    = wc_get_product($product_id);
-    $plan_title = $product->get_name();
+    $product         = wc_get_product($product_id);
+    $plan_title      = $product->get_name();
+    $base_plan_price = (float) $product->get_price();
 
     if (stripos($plan_title, 'juice') !== false || stripos($plan_title, 'cleanse') !== false) {
         $categories = array('Juices');
@@ -268,15 +269,16 @@ function mpc_process_order() {
     }
 
     // ---- SERVER-SIDE COUPON VALIDATION ----
-    $discount_type   = '';
-    $discount_label  = '';
-    $coupon_used     = '';
-    $is_100_percent_free = false;
+    $discount_type          = '';
+    $discount_label         = '';
+    $coupon_used            = '';
+    $is_100_percent_free    = false;
+    $final_discount_to_save = 0.00;
 
     if ( ! empty( $coupon_code_raw ) ) {
         $wc_coupon = new WC_Coupon( $coupon_code_raw );
         if ( $wc_coupon->get_id() ) {
-            $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, (float)$product->get_price(), $email);
+            $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, $base_plan_price, $email);
             if ( $validation_result === true ) {
                 $discount_type  = $wc_coupon->get_discount_type();
                 $coupon_used    = $coupon_code_raw;
@@ -383,6 +385,8 @@ function mpc_process_order() {
         }
 
         if ( $discount_amount > 0 ) {
+            $final_discount_to_save = $discount_amount;
+            
             $fee = new WC_Order_Item_Fee();
             $fee->set_name( $discount_label . ' (' . $coupon_used . ')' );
             $fee->set_amount( -$discount_amount );
@@ -430,6 +434,8 @@ function mpc_process_order() {
         'plan_name'          => $final_plan_name,
         'total_days'         => $days,
         'allowed_categories' => implode(',', $categories),
+        'plan_price'         => $base_plan_price,         // PHASE 1 UPGRADE
+        'discount_amount'    => $final_discount_to_save,  // PHASE 1 UPGRADE
         'status'             => 'pending',
         'start_date'         => date('Y-m-d H:i:s'),
         'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
@@ -528,11 +534,23 @@ function mpc_render_checkout_wizard() {
         if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
     }
 
+    // --- MAGIC LINK CHECK ---
+    $vip_token = isset($_GET['vip_token']) ? sanitize_text_field($_GET['vip_token']) : '';
+    $is_valid_vip_token = false;
+    if (!empty($vip_token)) {
+        $active_links = get_option('cmp_active_magic_links', array());
+        if (isset($active_links[$vip_token])) {
+            $is_valid_vip_token = true;
+        }
+    }
+
     // DETERMINE DEPOSIT REQUIREMENT ON LOAD (Default Fallback)
     $requires_deposit_init = 'true';
     $deposit_meta_init = '';
     
-    if ( is_user_logged_in() ) {
+    if ($is_valid_vip_token) {
+        $requires_deposit_init = 'false';
+    } else if ( is_user_logged_in() ) {
         $uid = get_current_user_id();
         $deposit_meta_init = get_user_meta($uid, '_cmp_deposit_held', true);
         
@@ -882,7 +900,7 @@ function mpc_render_checkout_wizard() {
 
             if (depositAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
-                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Contact support/WhatsApp.</div>`;
+                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Click support/WhatsApp if you are an existing cutomer.</div>`;
             } else if (activeVipToken !== '' || userDepositStatus === 'own_bag') {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #8b5cf6;"><span>Thermal Bag Deposit:</span> <strong>Waived (Customer's Own Bag)</strong></div>`;
             } else if (!requiresDeposit && !is100PercentFree) {
