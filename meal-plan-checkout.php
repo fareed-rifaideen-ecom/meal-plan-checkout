@@ -1,10 +1,11 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Plugin URI: https://github.com/fareed-rifaideen-ecom
+ * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-plan-checkout
  * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit, VIP Bypass & Per-Plan Logistics)
  * Version: 4.2
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
+ * Author URI: https://fareed-rifaideen.netlify.app
  */
 
 // Prevent direct file access
