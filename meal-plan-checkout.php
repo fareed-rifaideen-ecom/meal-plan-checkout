@@ -1,24 +1,120 @@
 <?php
 /**
  * Plugin Name: Meal Plan Custom Checkout
- * Plugin URI: https://github.com/fareed-rifaideen-ecom
- * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit & VIP Bypass)
- * Version: 4.1
+ * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-plan-checkout
+ * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Flexible Quota, Native Deposit, VIP Bypass & Per-Plan Logistics)
+ * Version: 4.2
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
+ * Author URI: https://fareed-rifaideen.netlify.app
  */
 
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
+if ( function_exists( 'opcache_invalidate' ) ) {
+    @opcache_invalidate( __FILE__, true );
+}
+
+// ==========================================
+// 0. PER-PLAN SUBSCRIPTION LOGISTICS SCHEMA & PROFILE HELPER
+// ==========================================
+function mpc_ensure_subscription_logistics_columns() {
+    if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
+        cmp_ensure_subscription_logistics_columns();
+        return;
+    }
+
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+
+    $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) );
+    if ( $table_exists !== $table_subs ) {
+        return;
+    }
+
+    $existing_cols = $wpdb->get_col( "DESC {$table_subs}", 0 );
+    if ( ! is_array( $existing_cols ) ) {
+        return;
+    }
+
+    $columns_to_add = array(
+        'delivery_method'  => "ALTER TABLE {$table_subs} ADD COLUMN delivery_method VARCHAR(100) DEFAULT ''",
+        'pickup_location'  => "ALTER TABLE {$table_subs} ADD COLUMN pickup_location VARCHAR(255) DEFAULT ''",
+        'delivery_timing'  => "ALTER TABLE {$table_subs} ADD COLUMN delivery_timing VARCHAR(100) DEFAULT ''",
+        'time_slot'        => "ALTER TABLE {$table_subs} ADD COLUMN time_slot VARCHAR(100) DEFAULT ''",
+        'allergies'        => "ALTER TABLE {$table_subs} ADD COLUMN allergies TEXT NULL",
+        'delivery_address' => "ALTER TABLE {$table_subs} ADD COLUMN delivery_address TEXT NULL",
+    );
+
+    foreach ( $columns_to_add as $col_name => $alter_sql ) {
+        if ( ! in_array( $col_name, $existing_cols, true ) ) {
+            $wpdb->query( $alter_sql );
+        }
+    }
+}
+
+function mpc_record_user_logistics_profile( $user_id, $sub_id, $profile_data = array(), $update_default_meta = true ) {
+    if ( function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
+        cmp_save_user_logistics_profile_history( $user_id, $sub_id, $profile_data, $update_default_meta );
+        return;
+    }
+
+    $user_id = intval( $user_id );
+    $sub_id  = intval( $sub_id );
+    if ( $user_id <= 0 ) {
+        return;
+    }
+
+    $timing    = sanitize_text_field( $profile_data['timing'] ?? '' );
+    $time_slot = sanitize_text_field( $profile_data['time_slot'] ?? '' );
+    $allergies = sanitize_textarea_field( $profile_data['allergies'] ?? '' );
+    $method    = sanitize_text_field( $profile_data['method'] ?? '' );
+    $pickup    = sanitize_text_field( $profile_data['pickup'] ?? '' );
+    $address   = sanitize_text_field( $profile_data['address'] ?? '' );
+    $plan_name = sanitize_text_field( $profile_data['plan_name'] ?? '' );
+
+    if ( $update_default_meta ) {
+        if ( ! empty( $timing ) )    update_user_meta( $user_id, 'delivery_timing', $timing );
+        if ( ! empty( $time_slot ) ) update_user_meta( $user_id, 'time_slot', $time_slot );
+        update_user_meta( $user_id, 'allergies', $allergies );
+        if ( ! empty( $method ) )    update_user_meta( $user_id, 'delivery_method', $method );
+        if ( ! empty( $pickup ) )    update_user_meta( $user_id, 'pickup_location', $pickup );
+    }
+
+    $profiles = get_user_meta( $user_id, '_cmp_saved_logistics_profiles', true );
+    if ( ! is_array( $profiles ) ) {
+        $profiles = array();
+    }
+
+    $profile_key = 'sub_' . ( $sub_id > 0 ? $sub_id : md5( $plan_name . '|' . $timing . '|' . $time_slot ) );
+    $profiles[ $profile_key ] = array(
+        'sub_id'     => $sub_id,
+        'plan_name'  => $plan_name ?: ( 'Plan #' . $sub_id ),
+        'method'     => $method,
+        'pickup'     => $pickup,
+        'timing'     => $timing,
+        'time_slot'  => $time_slot,
+        'allergies'  => $allergies,
+        'address'    => $address,
+        'updated_at' => current_time( 'mysql' ),
+    );
+
+    if ( count( $profiles ) > 15 ) {
+        $profiles = array_slice( $profiles, -15, 15, true );
+    }
+
+    update_user_meta( $user_id, '_cmp_saved_logistics_profiles', $profiles );
+}
+
 // ==========================================
 // 1. ENQUEUE SCRIPTS & STYLES
 // ==========================================
-add_action('wp_enqueue_scripts', 'mpc_enqueue_assets');
+add_action( 'wp_enqueue_scripts', 'mpc_enqueue_assets' );
 function mpc_enqueue_assets() {
     global $post;
-    if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout') ) {
+    if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout' ) ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists($css_file) ? filemtime($css_file) : '4.1';
+        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.2';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -26,8 +122,8 @@ function mpc_enqueue_assets() {
 // ==========================================
 // 2. AJAX: FRESH NONCE (Cache-Safe)
 // ==========================================
-add_action('wp_ajax_nopriv_mpc_get_nonce', 'mpc_get_fresh_nonce');
-add_action('wp_ajax_mpc_get_nonce',        'mpc_get_fresh_nonce');
+add_action( 'wp_ajax_nopriv_mpc_get_nonce', 'mpc_get_fresh_nonce' );
+add_action( 'wp_ajax_mpc_get_nonce',        'mpc_get_fresh_nonce' );
 function mpc_get_fresh_nonce() {
     wp_send_json_success( array( 'nonce' => wp_create_nonce( 'mpc_checkout_nonce' ) ) );
 }
@@ -37,82 +133,115 @@ function mpc_get_fresh_nonce() {
 // ==========================================
 function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $user_email ) {
     $expiry = $coupon->get_date_expires();
-    if ( $expiry && $expiry->getTimestamp() < time() ) { return 'This coupon has expired.'; }
+    if ( $expiry && $expiry->getTimestamp() < time() ) {
+        return 'This coupon has expired.';
+    }
 
     $usage_limit = $coupon->get_usage_limit();
-    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) { return 'This coupon has reached its global usage limit.'; }
+    if ( $usage_limit > 0 && $coupon->get_usage_count() >= $usage_limit ) {
+        return 'This coupon has reached its global usage limit.';
+    }
 
     $usage_limit_per_user = $coupon->get_usage_limit_per_user();
     if ( $usage_limit_per_user > 0 ) {
-        $used_by = $coupon->get_used_by();
-        $user_id = get_current_user_id();
+        $used_by     = $coupon->get_used_by();
+        $user_id     = get_current_user_id();
         $usage_count = 0;
         foreach ( $used_by as $used ) {
             if ( ( $user_id > 0 && intval( $used ) === $user_id ) || strcasecmp( $used, $user_email ) === 0 ) {
                 $usage_count++;
             }
         }
-        if ( $usage_count >= $usage_limit_per_user ) { return 'You have already reached the usage limit for this coupon.'; }
+        if ( $usage_count >= $usage_limit_per_user ) {
+            return 'You have already reached the usage limit for this coupon.';
+        }
     }
 
     $discount_type = $coupon->get_discount_type();
-    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) { return 'This coupon type is not supported in the custom checkout.'; }
+    if ( ! in_array( $discount_type, array( 'percent', 'fixed_cart' ), true ) ) {
+        return 'This coupon type is not supported in the custom checkout.';
+    }
 
     $min_spend = $coupon->get_minimum_amount();
-    if ( $min_spend > 0 && $price < $min_spend ) { return 'Minimum spend for this coupon is AED ' . $min_spend; }
+    if ( $min_spend > 0 && $price < $min_spend ) {
+        return 'Minimum spend for this coupon is AED ' . $min_spend;
+    }
 
     $max_spend = $coupon->get_maximum_amount();
-    if ( $max_spend > 0 && $price > $max_spend ) { return 'Maximum spend for this coupon is AED ' . $max_spend; }
+    if ( $max_spend > 0 && $price > $max_spend ) {
+        return 'Maximum spend for this coupon is AED ' . $max_spend;
+    }
 
     $valid_products = $coupon->get_product_ids();
-    if ( ! empty( $valid_products ) && ! in_array( $product_id, $valid_products ) ) { return 'This coupon is not applicable to the selected plan.'; }
+    if ( ! empty( $valid_products ) && ! in_array( $product_id, $valid_products ) ) {
+        return 'This coupon is not applicable to the selected plan.';
+    }
 
     $excluded_products = $coupon->get_excluded_product_ids();
-    if ( ! empty( $excluded_products ) && in_array( $product_id, $excluded_products ) ) { return 'The selected plan is excluded from this coupon.'; }
+    if ( ! empty( $excluded_products ) && in_array( $product_id, $excluded_products ) ) {
+        return 'The selected plan is excluded from this coupon.';
+    }
 
-    $valid_categories = $coupon->get_product_categories();
+    $valid_categories    = $coupon->get_product_categories();
     $excluded_categories = $coupon->get_excluded_product_categories();
     if ( ! empty( $valid_categories ) || ! empty( $excluded_categories ) ) {
         $product_cats = wc_get_product_term_ids( $product_id, 'product_cat' );
-        if ( ! empty( $valid_categories ) && count( array_intersect( $valid_categories, $product_cats ) ) === 0 ) { return 'This coupon is not applicable to this plan category.'; }
-        if ( ! empty( $excluded_categories ) && count( array_intersect( $excluded_categories, $product_cats ) ) > 0 ) { return 'This plan category is excluded from this coupon.'; }
+        if ( ! empty( $valid_categories ) && count( array_intersect( $valid_categories, $product_cats ) ) === 0 ) {
+            return 'This coupon is not applicable to this plan category.';
+        }
+        if ( ! empty( $excluded_categories ) && count( array_intersect( $excluded_categories, $product_cats ) ) > 0 ) {
+            return 'This plan category is excluded from this coupon.';
+        }
     }
 
     $restricted_emails = $coupon->get_email_restrictions();
     if ( ! empty( $restricted_emails ) ) {
-        if ( empty( $user_email ) ) { return 'This coupon is restricted. Please log in, or proceed to Step 2 to enter your email before applying.'; }
+        if ( empty( $user_email ) ) {
+            return 'This coupon is restricted. Please log in, or proceed to Step 2 to enter your email before applying.';
+        }
         $email_valid = false;
         foreach ( $restricted_emails as $restricted_email ) {
             $regex = '/^' . str_replace( '\*', '.*', preg_quote( $restricted_email, '/' ) ) . '$/i';
-            if ( preg_match( $regex, $user_email ) ) { $email_valid = true; break; }
+            if ( preg_match( $regex, $user_email ) ) {
+                $email_valid = true;
+                break;
+            }
         }
-        if ( ! $email_valid ) { return 'This coupon is not valid for your email address.'; }
+        if ( ! $email_valid ) {
+            return 'This coupon is not valid for your email address.';
+        }
     }
 
-    return true; // All rules passed
+    return true;
 }
 
 // ==========================================
 // 4. AJAX: COUPON VALIDATION FRONTEND
 // ==========================================
-add_action('wp_ajax_nopriv_mpc_validate_coupon', 'mpc_ajax_validate_coupon');
-add_action('wp_ajax_mpc_validate_coupon',        'mpc_ajax_validate_coupon');
+add_action( 'wp_ajax_nopriv_mpc_validate_coupon', 'mpc_ajax_validate_coupon' );
+add_action( 'wp_ajax_mpc_validate_coupon',        'mpc_ajax_validate_coupon' );
 function mpc_ajax_validate_coupon() {
     check_ajax_referer( 'mpc_checkout_nonce', 'nonce' );
 
     $code       = strtoupper( sanitize_text_field( $_POST['coupon_code'] ) );
-    $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
-    $user_email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+    $product_id = isset( $_POST['product_id'] ) ? intval( $_POST['product_id'] ) : 0;
+    $user_email = isset( $_POST['email'] ) ? sanitize_email( $_POST['email'] ) : '';
 
-    if ( is_user_logged_in() && empty($user_email) ) {
+    if ( is_user_logged_in() && empty( $user_email ) ) {
         $user_email = wp_get_current_user()->user_email;
     }
 
-    if ( empty( $code ) ) { wp_send_json_error( 'Please enter a coupon code.' ); }
-    if ( empty( $product_id ) ) { wp_send_json_error( 'Please select a meal plan first.' ); }
+    if ( empty( $code ) ) {
+        wp_send_json_error( 'Please enter a coupon code.' );
+    }
+    if ( empty( $product_id ) ) {
+        wp_send_json_error( 'Please select a meal plan first.' );
+    }
 
-    $product = wc_get_product($product_id);
-    if ( ! $product ) { wp_send_json_error( 'Invalid meal plan selected.' ); }
+    $product = wc_get_product( $product_id );
+    if ( ! $product ) {
+        wp_send_json_error( 'Invalid meal plan selected.' );
+    }
     $price = (float) $product->get_price();
 
     $coupon = new WC_Coupon( $code );
@@ -120,14 +249,13 @@ function mpc_ajax_validate_coupon() {
         wp_send_json_error( 'Invalid coupon code.' );
     }
 
-    // Run the strict rule engine
-    $validation_result = mpc_validate_woocommerce_coupon_rules($coupon, $product_id, $price, $user_email);
+    $validation_result = mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $user_email );
     if ( $validation_result !== true ) {
         wp_send_json_error( $validation_result );
     }
 
     $discount_type = $coupon->get_discount_type();
-    $label = trim( $coupon->get_description() );
+    $label         = trim( $coupon->get_description() );
     if ( empty( $label ) ) {
         $amount_display = ( $discount_type === 'percent' )
             ? $coupon->get_amount() . '% Off'
@@ -146,14 +274,16 @@ function mpc_ajax_validate_coupon() {
 // ==========================================
 // 5. AJAX: VIP MAGIC LINK LIVE VALIDATOR
 // ==========================================
-add_action('wp_ajax_nopriv_mpc_validate_vip_token', 'mpc_ajax_validate_vip_token');
-add_action('wp_ajax_mpc_validate_vip_token',        'mpc_ajax_validate_vip_token');
+add_action( 'wp_ajax_nopriv_mpc_validate_vip_token', 'mpc_ajax_validate_vip_token' );
+add_action( 'wp_ajax_mpc_validate_vip_token',        'mpc_ajax_validate_vip_token' );
 function mpc_ajax_validate_vip_token() {
-    $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
-    if (empty($token)) { wp_send_json_error(); }
-    
-    $active_links = get_option('cmp_active_magic_links', array());
-    if (isset($active_links[$token])) {
+    $token = isset( $_POST['token'] ) ? sanitize_text_field( $_POST['token'] ) : '';
+    if ( empty( $token ) ) {
+        wp_send_json_error();
+    }
+
+    $active_links = get_option( 'cmp_active_magic_links', array() );
+    if ( isset( $active_links[ $token ] ) ) {
         wp_send_json_success();
     } else {
         wp_send_json_error();
@@ -163,15 +293,15 @@ function mpc_ajax_validate_vip_token() {
 // ==========================================
 // 6. AJAX: SECURE USER LOGIN
 // ==========================================
-add_action('wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login');
+add_action( 'wp_ajax_nopriv_mpc_login_user', 'mpc_ajax_login' );
 function mpc_ajax_login() {
-    check_ajax_referer('mpc_checkout_nonce', 'nonce');
+    check_ajax_referer( 'mpc_checkout_nonce', 'nonce' );
     global $wpdb;
 
     $creds = array(
-        'user_login'    => sanitize_text_field($_POST['log']),
+        'user_login'    => sanitize_text_field( $_POST['log'] ),
         'user_password' => $_POST['pwd'],
-        'remember'      => true
+        'remember'      => true,
     );
 
     $user = wp_signon( $creds, is_ssl() );
@@ -182,89 +312,95 @@ function mpc_ajax_login() {
         $user_id = $user->ID;
 
         // DEPOSIT WALLET LOGIC WITH "OWN BAG" THIRD STATE
-        $deposit_meta = get_user_meta($user_id, '_cmp_deposit_held', true);
-        if ($deposit_meta === '') {
-            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
-            if (intval($past_plans) > 0) {
-                update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather them in
-                $deposit_meta = 'yes';
+        $deposit_meta = get_user_meta( $user_id, '_cmp_deposit_held', true );
+        if ( $deposit_meta === '' ) {
+            $past_plans = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id ) );
+            if ( intval( $past_plans ) > 0 ) {
+                update_user_meta( $user_id, '_cmp_deposit_held', 'yes' );
+                $deposit_meta     = 'yes';
                 $requires_deposit = false;
             } else {
                 $requires_deposit = true;
             }
         } else {
-            $requires_deposit = ($deposit_meta !== 'yes' && $deposit_meta !== 'own_bag');
+            $requires_deposit = ( $deposit_meta !== 'yes' && $deposit_meta !== 'own_bag' );
         }
 
         $data = array(
-            'first_name'        => $user->first_name,
-            'last_name'         => $user->last_name,
-            'email'             => $user->user_email,
-            'phone'             => get_user_meta($user_id, 'billing_phone', true),
-            'address_1'         => get_user_meta($user_id, 'billing_address_1', true),
-            'address_2'         => get_user_meta($user_id, 'billing_address_2', true),
-            'delivery_method'   => get_user_meta($user_id, 'delivery_method', true),
-            'delivery_timing'   => get_user_meta($user_id, 'delivery_timing', true),
-            'time_slot'         => get_user_meta($user_id, 'time_slot', true),
-            'pickup_location'   => get_user_meta($user_id, 'pickup_location', true),
-            'new_nonce'         => wp_create_nonce( 'mpc_checkout_nonce' ),
-            'requires_deposit'  => $requires_deposit,
-            'deposit_status'    => $deposit_meta
+            'first_name'       => $user->first_name,
+            'last_name'        => $user->last_name,
+            'email'            => $user->user_email,
+            'phone'            => get_user_meta( $user_id, 'billing_phone', true ),
+            'address_1'        => get_user_meta( $user_id, 'billing_address_1', true ),
+            'address_2'        => get_user_meta( $user_id, 'billing_address_2', true ),
+            'delivery_method'  => get_user_meta( $user_id, 'delivery_method', true ),
+            'delivery_timing'  => get_user_meta( $user_id, 'delivery_timing', true ),
+            'time_slot'        => get_user_meta( $user_id, 'time_slot', true ),
+            'pickup_location'  => get_user_meta( $user_id, 'pickup_location', true ),
+            'allergies'        => get_user_meta( $user_id, 'allergies', true ),
+            'new_nonce'        => wp_create_nonce( 'mpc_checkout_nonce' ),
+            'requires_deposit' => $requires_deposit,
+            'deposit_status'   => $deposit_meta,
         );
-        wp_send_json_success($data);
+        wp_send_json_success( $data );
     }
 }
 
 // ==========================================
-// 7. AJAX: ORDER PROCESSING
+// 7. AJAX: ORDER PROCESSING (PER-PLAN LOGISTICS & ALLERGY ISOLATION)
 // ==========================================
-add_action('wp_ajax_nopriv_mpc_process_order', 'mpc_process_order');
-add_action('wp_ajax_mpc_process_order',        'mpc_process_order');
+add_action( 'wp_ajax_nopriv_mpc_process_order', 'mpc_process_order' );
+add_action( 'wp_ajax_mpc_process_order',        'mpc_process_order' );
 
 function mpc_process_order() {
-    check_ajax_referer('mpc_checkout_nonce', 'nonce');
+    check_ajax_referer( 'mpc_checkout_nonce', 'nonce' );
     global $wpdb;
 
-    $product_id      = intval($_POST['product_id']);
-    $first_name      = sanitize_text_field($_POST['first_name']);
-    $last_name       = sanitize_text_field($_POST['last_name']);
-    $email           = sanitize_email($_POST['email']);
-    $phone           = sanitize_text_field($_POST['phone']);
-    $password        = isset($_POST['password']) ? $_POST['password'] : '';
-    $address_1       = sanitize_text_field($_POST['address_1']);
-    $address_2       = sanitize_text_field($_POST['address_2']);
-    $delivery_method = sanitize_text_field($_POST['delivery_method']);
-    $delivery_timing = sanitize_text_field($_POST['delivery_timing']);
-    $time_slot       = sanitize_text_field($_POST['time_slot']);
-    $pickup_location = isset($_POST['pickup_location']) ? sanitize_text_field($_POST['pickup_location']) : '';
-    $allergies       = sanitize_textarea_field($_POST['allergies']);
-    $recipient_name  = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : ''; 
-    $coupon_code_raw = isset($_POST['coupon_code']) ? strtoupper( sanitize_text_field($_POST['coupon_code']) ) : '';
+    mpc_ensure_subscription_logistics_columns();
 
-    if (!$product_id || !$email || !$first_name || !$address_1) {
-        wp_send_json_error('Missing mandatory fields.');
+    $product_id      = intval( $_POST['product_id'] );
+    $first_name      = sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) );
+    $last_name       = sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) );
+    $email           = sanitize_email( wp_unslash( $_POST['email'] ?? '' ) );
+    $phone           = sanitize_text_field( wp_unslash( $_POST['phone'] ?? '' ) );
+    $password        = isset( $_POST['password'] ) ? $_POST['password'] : '';
+    $address_1       = sanitize_text_field( wp_unslash( $_POST['address_1'] ?? '' ) );
+    $address_2       = sanitize_text_field( wp_unslash( $_POST['address_2'] ?? '' ) );
+    $delivery_method = sanitize_text_field( wp_unslash( $_POST['delivery_method'] ?? '' ) );
+    $delivery_timing = sanitize_text_field( wp_unslash( $_POST['delivery_timing'] ?? '' ) );
+    $time_slot       = sanitize_text_field( wp_unslash( $_POST['time_slot'] ?? '' ) );
+    $pickup_location = isset( $_POST['pickup_location'] ) ? sanitize_text_field( wp_unslash( $_POST['pickup_location'] ) ) : '';
+    $allergies       = sanitize_textarea_field( wp_unslash( $_POST['allergies'] ?? '' ) );
+    $recipient_name  = isset( $_POST['recipient_name'] ) ? sanitize_text_field( wp_unslash( $_POST['recipient_name'] ) ) : '';
+    $coupon_code_raw = isset( $_POST['coupon_code'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_POST['coupon_code'] ) ) ) : '';
+
+    if ( ! $product_id || ! $email || ! $first_name || ! $address_1 ) {
+        wp_send_json_error( 'Missing mandatory fields.' );
     }
 
-    $product         = wc_get_product($product_id);
+    $product = wc_get_product( $product_id );
+    if ( ! $product ) {
+        wp_send_json_error( 'Selected meal plan product was not found.' );
+    }
     $plan_title      = $product->get_name();
     $base_plan_price = (float) $product->get_price();
 
-    if (stripos($plan_title, 'juice') !== false || stripos($plan_title, 'cleanse') !== false) {
-        $categories = array('Juices');
+    if ( stripos( $plan_title, 'juice' ) !== false || stripos( $plan_title, 'cleanse' ) !== false ) {
+        $categories = array( 'Juices' );
     } else {
-        $categories = array('Breakfast', 'Lunch', 'Dinner', 'Snacks');
+        $categories = array( 'Breakfast', 'Lunch', 'Dinner', 'Snacks' );
     }
 
     // ---- MAGIC LINK: OWN BAG TOKEN CHECK ----
-    $vip_token = isset($_POST['vip_token']) ? sanitize_text_field($_POST['vip_token']) : '';
+    $vip_token        = isset( $_POST['vip_token'] ) ? sanitize_text_field( $_POST['vip_token'] ) : '';
     $is_own_bag_token = false;
 
-    if ( ! empty($vip_token) ) {
-        $active_links = get_option('cmp_active_magic_links', array());
-        if (isset($active_links[$vip_token])) {
+    if ( ! empty( $vip_token ) ) {
+        $active_links = get_option( 'cmp_active_magic_links', array() );
+        if ( isset( $active_links[ $vip_token ] ) ) {
             $is_own_bag_token = true;
-            unset($active_links[$vip_token]); // Immediately destroy token to prevent multi-use
-            update_option('cmp_active_magic_links', $active_links);
+            unset( $active_links[ $vip_token ] ); // Immediately destroy token to prevent multi-use
+            update_option( 'cmp_active_magic_links', $active_links );
         }
     }
 
@@ -278,96 +414,119 @@ function mpc_process_order() {
     if ( ! empty( $coupon_code_raw ) ) {
         $wc_coupon = new WC_Coupon( $coupon_code_raw );
         if ( $wc_coupon->get_id() ) {
-            $validation_result = mpc_validate_woocommerce_coupon_rules($wc_coupon, $product_id, $base_plan_price, $email);
+            $validation_result = mpc_validate_woocommerce_coupon_rules( $wc_coupon, $product_id, $base_plan_price, $email );
             if ( $validation_result === true ) {
                 $discount_type  = $wc_coupon->get_discount_type();
                 $coupon_used    = $coupon_code_raw;
                 $label_raw      = trim( $wc_coupon->get_description() );
                 $discount_label = ! empty( $label_raw ) ? $label_raw : ucwords( strtolower( $coupon_code_raw ) ) . ' Discount';
-                
-                if ($discount_type === 'percent' && floatval($wc_coupon->get_amount()) >= 100) {
+
+                if ( $discount_type === 'percent' && floatval( $wc_coupon->get_amount() ) >= 100 ) {
                     $is_100_percent_free = true;
                 }
-            } else { wp_send_json_error( 'Coupon Error: ' . $validation_result ); }
-        } else { wp_send_json_error( 'Coupon Error: Invalid coupon code.' ); }
+            } else {
+                wp_send_json_error( 'Coupon Error: ' . $validation_result );
+            }
+        } else {
+            wp_send_json_error( 'Coupon Error: Invalid coupon code.' );
+        }
     }
 
     // ---- USER CREATION & DEPOSIT WALLET LOGIC ----
-    $user_id = get_current_user_id();
+    $user_id          = get_current_user_id();
     $requires_deposit = false;
-    $deposit_meta = '';
+    $deposit_meta     = '';
+    $table_subs       = $wpdb->prefix . 'cmp_subscriptions';
 
-    if (!$user_id) {
-        if (email_exists($email)) {
-            wp_send_json_error('An account with this email already exists. Please scroll up and log in.');
+    if ( ! $user_id ) {
+        if ( email_exists( $email ) ) {
+            wp_send_json_error( 'An account with this email already exists. Please scroll up and log in.' );
         }
-        $user_id = wp_create_user($email, $password, $email);
-        if (is_wp_error($user_id)) {
+        $user_id = wp_create_user( $email, $password, $email );
+        if ( is_wp_error( $user_id ) ) {
             wp_send_json_error( $user_id->get_error_message() );
         }
         wp_clear_auth_cookie();
-        wp_set_current_user($user_id);
-        wp_set_auth_cookie($user_id, true);
-        
-        $requires_deposit = !$is_own_bag_token; // Force deposit unless they used a valid VIP Magic Link
+        wp_set_current_user( $user_id );
+        wp_set_auth_cookie( $user_id, true );
+
+        $requires_deposit = ! $is_own_bag_token;
     } else {
-        $deposit_meta = get_user_meta($user_id, '_cmp_deposit_held', true);
-        if ($is_own_bag_token) {
-            $requires_deposit = false; // Magic Link overrides
+        $deposit_meta = get_user_meta( $user_id, '_cmp_deposit_held', true );
+        if ( $is_own_bag_token ) {
+            $requires_deposit = false;
         } else {
-            if ($deposit_meta === '') {
-                $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $user_id));
-                if (intval($past_plans) > 0) {
-                    update_user_meta($user_id, '_cmp_deposit_held', 'yes'); // Grandfather
+            if ( $deposit_meta === '' ) {
+                $past_plans = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d", $user_id ) );
+                if ( intval( $past_plans ) > 0 ) {
+                    update_user_meta( $user_id, '_cmp_deposit_held', 'yes' );
                     $requires_deposit = false;
-                    $deposit_meta = 'yes';
+                    $deposit_meta     = 'yes';
                 } else {
                     $requires_deposit = true;
                 }
             } else {
-                $requires_deposit = ($deposit_meta !== 'yes' && $deposit_meta !== 'own_bag');
+                $requires_deposit = ( $deposit_meta !== 'yes' && $deposit_meta !== 'own_bag' );
             }
         }
     }
 
-    // --- SAVE USER META ---
-    wp_update_user(array('ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name));
-    update_user_meta($user_id, 'billing_phone',    $phone);
-    update_user_meta($user_id, 'billing_address_1',$address_1);
-    update_user_meta($user_id, 'billing_address_2',$address_2);
-    update_user_meta($user_id, 'billing_city',     'Dubai');
-    update_user_meta($user_id, 'billing_country',  'AE');
-    update_user_meta($user_id, 'delivery_method',  $delivery_method);
-    update_user_meta($user_id, 'delivery_timing',  $delivery_timing);
-    update_user_meta($user_id, 'time_slot',        $time_slot);
-    update_user_meta($user_id, 'pickup_location',  $pickup_location);
-    update_user_meta($user_id, 'allergies',        $allergies);
+    // Check if the customer already has another active/paused subscription
+    $existing_active_subs = intval( $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')",
+        $user_id
+    ) ) );
+
+    // --- SAVE USER META (Preserves existing active plan's user_meta if multi-plan customer) ---
+    wp_update_user( array( 'ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name ) );
+    update_user_meta( $user_id, 'billing_phone',     $phone );
+    update_user_meta( $user_id, 'billing_address_1', $address_1 );
+    update_user_meta( $user_id, 'billing_address_2', $address_2 );
+    update_user_meta( $user_id, 'billing_city',      'Dubai' );
+    update_user_meta( $user_id, 'billing_country',   'AE' );
+
+    if ( $existing_active_subs === 0 ) {
+        update_user_meta( $user_id, 'delivery_method', $delivery_method );
+        update_user_meta( $user_id, 'delivery_timing', $delivery_timing );
+        update_user_meta( $user_id, 'time_slot',       $time_slot );
+        update_user_meta( $user_id, 'pickup_location', $pickup_location );
+        update_user_meta( $user_id, 'allergies',       $allergies );
+    }
 
     // --- CREATE WOOCOMMERCE ORDER ---
-    $order = wc_create_order(array('customer_id' => $user_id));
-    $order->add_product($product, 1);
+    $order = wc_create_order( array( 'customer_id' => $user_id ) );
+    $order->add_product( $product, 1 );
 
     $address = array(
-        'first_name' => $first_name, 'last_name' => $last_name,
-        'email'      => $email,      'phone'     => $phone,
-        'address_1'  => $address_1,  'address_2' => $address_2,
-        'city'       => 'Dubai',     'country'   => 'AE',
+        'first_name' => $first_name,
+        'last_name'  => $last_name,
+        'email'      => $email,
+        'phone'      => $phone,
+        'address_1'  => $address_1,
+        'address_2'  => $address_2,
+        'city'       => 'Dubai',
+        'country'    => 'AE',
     );
-    $order->set_address($address, 'billing');
-    $order->set_address($address, 'shipping');
-    $order->set_customer_note($allergies);
+    $order->set_address( $address, 'billing' );
+    $order->set_address( $address, 'shipping' );
+    $order->set_customer_note( $allergies );
 
-    $order->update_meta_data('delivery_method',          $delivery_method);
-    $order->update_meta_data('delivery_timing',          $delivery_timing);
-    $order->update_meta_data('time_slot',                $time_slot);
-    $order->update_meta_data('pickup_location',          $pickup_location);
-    $order->update_meta_data('allergies',                $allergies);
-    $order->update_meta_data('_cmp_allowed_categories',  implode(',', $categories));
+    // Store both standard & prefixed meta keys for 100% portal compatibility
+    $order->update_meta_data( 'delivery_method',         $delivery_method );
+    $order->update_meta_data( '_cmp_logistics_method',   $delivery_method );
+    $order->update_meta_data( 'delivery_timing',         $delivery_timing );
+    $order->update_meta_data( '_cmp_delivery_timing',    $delivery_timing );
+    $order->update_meta_data( 'time_slot',               $time_slot );
+    $order->update_meta_data( '_cmp_time_slot',          $time_slot );
+    $order->update_meta_data( 'pickup_location',         $pickup_location );
+    $order->update_meta_data( '_cmp_pickup_location',    $pickup_location );
+    $order->update_meta_data( 'allergies',               $allergies );
+    $order->update_meta_data( '_cmp_allowed_categories', implode( ',', $categories ) );
 
     // Logistics Note for Own Bag
-    if ($is_own_bag_token || $deposit_meta === 'own_bag') {
-        update_user_meta($user_id, '_cmp_deposit_held', 'own_bag'); // Lock status to Profile
-        $order->add_order_note('Logistics Alert: Customer is using their OWN BAG. Do not issue a new thermal bag.');
+    if ( $is_own_bag_token || $deposit_meta === 'own_bag' ) {
+        update_user_meta( $user_id, '_cmp_deposit_held', 'own_bag' );
+        $order->add_order_note( 'Logistics Alert: Customer is using their OWN BAG. Do not issue a new thermal bag.' );
     }
 
     // --- APPLY COUPON FEE (IF APPLICABLE) ---
@@ -381,29 +540,31 @@ function mpc_process_order() {
             $discount_amount = round( $subtotal * ( (float) $wc_coupon_obj->get_amount() / 100 ), 2 );
         } elseif ( $discount_type === 'fixed_cart' ) {
             $discount_amount = min( round( (float) $wc_coupon_obj->get_amount(), 2 ), $subtotal );
-            if ($discount_amount >= $subtotal) $is_100_percent_free = true;
+            if ( $discount_amount >= $subtotal ) {
+                $is_100_percent_free = true;
+            }
         }
 
         if ( $discount_amount > 0 ) {
             $final_discount_to_save = $discount_amount;
-            
+
             $fee = new WC_Order_Item_Fee();
             $fee->set_name( $discount_label . ' (' . $coupon_used . ')' );
             $fee->set_amount( -$discount_amount );
             $fee->set_total( -$discount_amount );
-            $fee->set_tax_status('none');
-            $order->add_item($fee);
+            $fee->set_tax_status( 'none' );
+            $order->add_item( $fee );
 
             $wc_coupon_obj->increase_usage_count( $email );
 
-            $order->update_meta_data('_mpc_coupon_used',     $coupon_used);
-            $order->update_meta_data('_mpc_discount_type',   $discount_type);
-            $order->update_meta_data('_mpc_discount_amount', $discount_amount);
+            $order->update_meta_data( '_mpc_coupon_used',     $coupon_used );
+            $order->update_meta_data( '_mpc_discount_type',   $discount_type );
+            $order->update_meta_data( '_mpc_discount_amount', $discount_amount );
         }
     }
 
     // --- NATIVE DEPOSIT INJECTION ---
-    if ( $requires_deposit && !$is_100_percent_free ) {
+    if ( $requires_deposit && ! $is_100_percent_free ) {
         $deposit_fee = new WC_Order_Item_Fee();
         $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
         $deposit_fee->set_amount( 150 );
@@ -415,43 +576,77 @@ function mpc_process_order() {
     $order->calculate_totals();
     $order->save();
 
-    // --- CREATE SUBSCRIPTION RECORD ---
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-
+    // --- CREATE SUBSCRIPTION RECORD (WITH PER-PLAN LOGISTICS & ALLERGIES) ---
     $days = 30;
-    if (stripos($plan_title, '7')  !== false) $days = 7;
-    if (stripos($plan_title, '20') !== false) $days = 20;
-    if (stripos($plan_title, '24') !== false) $days = 24;
-    if (stripos($plan_title, '5')  !== false) $days = 5;
-    if (stripos($plan_title, '3')  !== false && stripos($plan_title, 'juice') !== false) $days = 3;
+    if ( stripos( $plan_title, '7' )  !== false ) $days = 7;
+    if ( stripos( $plan_title, '20' ) !== false ) $days = 20;
+    if ( stripos( $plan_title, '24' ) !== false ) $days = 24;
+    if ( stripos( $plan_title, '5' )  !== false ) $days = 5;
+    if ( stripos( $plan_title, '3' )  !== false && stripos( $plan_title, 'juice' ) !== false ) $days = 3;
 
     $final_plan_name = $plan_title;
-    if (!empty($recipient_name)) { $final_plan_name .= ' - ' . $recipient_name; }
+    if ( ! empty( $recipient_name ) ) {
+        $final_plan_name .= ' - ' . $recipient_name;
+    }
 
-    $wpdb->insert($table_subs, array(
+    $full_delivery_address = implode( ', ', array_filter( array( $address_1, $address_2, 'Dubai' ) ) );
+
+    $insert_data = array(
         'user_id'            => $user_id,
         'wc_order_id'        => $order->get_id(),
         'plan_name'          => $final_plan_name,
         'total_days'         => $days,
-        'allowed_categories' => implode(',', $categories),
-        'plan_price'         => $base_plan_price,         // PHASE 1 UPGRADE
-        'discount_amount'    => $final_discount_to_save,  // PHASE 1 UPGRADE
+        'allowed_categories' => implode( ',', $categories ),
+        'plan_price'         => $base_plan_price,
+        'discount_amount'    => $final_discount_to_save,
         'status'             => 'pending',
-        'start_date'         => date('Y-m-d H:i:s'),
-        'expiry_date'        => date('Y-m-d H:i:s', strtotime("+$days days")),
-    ));
+        'start_date'         => date( 'Y-m-d H:i:s' ),
+        'expiry_date'        => date( 'Y-m-d H:i:s', strtotime( "+$days days" ) ),
+    );
+
+    // Populate dedicated per-plan logistics columns on wp_cmp_subscriptions
+    $existing_cols = $wpdb->get_col( "DESC {$table_subs}", 0 );
+    if ( is_array( $existing_cols ) ) {
+        if ( in_array( 'delivery_method', $existing_cols, true ) )  $insert_data['delivery_method']  = $delivery_method;
+        if ( in_array( 'pickup_location', $existing_cols, true ) )  $insert_data['pickup_location']  = ( $delivery_method === 'Pickup' ) ? $pickup_location : '';
+        if ( in_array( 'delivery_timing', $existing_cols, true ) )  $insert_data['delivery_timing']  = $delivery_timing;
+        if ( in_array( 'time_slot', $existing_cols, true ) )        $insert_data['time_slot']        = $time_slot;
+        if ( in_array( 'allergies', $existing_cols, true ) )        $insert_data['allergies']        = ( $allergies !== '' ) ? $allergies : '__NONE__';
+        if ( in_array( 'delivery_address', $existing_cols, true ) ) $insert_data['delivery_address'] = $full_delivery_address;
+    }
+
+    $wpdb->insert( $table_subs, $insert_data );
+    $new_sub_id = intval( $wpdb->insert_id );
+
+    // Record into customer's saved logistics profile history
+    if ( $user_id > 0 && $new_sub_id > 0 ) {
+        mpc_record_user_logistics_profile(
+            $user_id,
+            $new_sub_id,
+            array(
+                'plan_name' => $final_plan_name,
+                'method'    => $delivery_method,
+                'pickup'    => ( $delivery_method === 'Pickup' ) ? $pickup_location : '',
+                'timing'    => $delivery_timing,
+                'time_slot' => $time_slot,
+                'allergies' => $allergies,
+                'address'   => $full_delivery_address,
+            ),
+            ( $existing_active_subs === 0 )
+        );
+    }
 
     // --- VIP 100% FREE BYPASS ---
     $final_order_total = (float) $order->get_total();
 
     if ( $final_order_total <= 0 ) {
         $order->payment_complete();
-        $order->add_order_note('100% Free VIP Coupon applied. Payment gateway bypassed (Internal Manual Entry).');
+        $order->add_order_note( '100% Free VIP Coupon applied. Payment gateway bypassed (Internal Manual Entry).' );
 
         $wpdb->update(
             $table_subs,
-            array('status' => 'active'),
-            array('wc_order_id' => $order->get_id())
+            array( 'status' => 'active' ),
+            array( 'wc_order_id' => $order->get_id() )
         );
         wp_send_json_success( array( 'payment_url' => esc_url_raw( $order->get_checkout_order_received_url() ) ) );
     } else {
@@ -473,7 +668,7 @@ function mpc_process_order() {
             'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => BISTRO_BRIDGE_SECRET ),
             'body'    => wp_json_encode( $payload ),
             'timeout' => 20,
-        ));
+        ) );
 
         if ( is_wp_error( $response ) ) {
             wp_send_json_error( 'Payment bridge error: ' . $response->get_error_message() );
@@ -503,65 +698,72 @@ function mpc_process_order() {
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
 function mpc_render_checkout_wizard() {
-    if ( ! class_exists( 'WooCommerce' ) ) { return '<p>WooCommerce is required.</p>'; }
+    if ( ! class_exists( 'WooCommerce' ) ) {
+        return '<p>WooCommerce is required.</p>';
+    }
 
     global $wpdb;
     $table_foods     = $wpdb->prefix . 'cmp_foods';
-    $food_categories = $wpdb->get_col("SELECT DISTINCT category_name FROM $table_foods WHERE is_active = 1 ORDER BY category_name ASC");
-    $map_url         = get_option('cmp_map_url', '#');
+    $food_categories = $wpdb->get_col( "SELECT DISTINCT category_name FROM $table_foods WHERE is_active = 1 ORDER BY category_name ASC" );
+    $map_url         = get_option( 'cmp_map_url', '#' );
 
-    $args     = array('status' => 'publish', 'limit' => -1, 'orderby' => 'meta_value_num', 'meta_key' => '_price', 'order' => 'ASC');
+    $args     = array( 'status' => 'publish', 'limit' => -1, 'orderby' => 'meta_value_num', 'meta_key' => '_price', 'order' => 'ASC' );
     $products = wc_get_products( $args );
 
     $grouped_plans = array(
-        '7-days'  => array('label' => '7-Day Plans',      'items' => array()),
-        '20-days' => array('label' => '20-Day Plans',     'items' => array()),
-        '24-days' => array('label' => '24-Day Plans',     'items' => array()),
-        'juice'   => array('label' => 'Cleanse Boosters', 'items' => array()),
-        'other'   => array('label' => 'Other Plans',      'items' => array()),
+        '7-days'  => array( 'label' => '7-Day Plans',      'items' => array() ),
+        '20-days' => array( 'label' => '20-Day Plans',     'items' => array() ),
+        '24-days' => array( 'label' => '24-Day Plans',     'items' => array() ),
+        'juice'   => array( 'label' => 'Cleanse Boosters', 'items' => array() ),
+        'other'   => array( 'label' => 'Other Plans',      'items' => array() ),
     );
 
-    foreach ($products as $product) {
-        $tag_slugs = wp_get_post_terms( $product->get_id(), 'product_tag', array('fields' => 'slugs') );
-        if ( is_wp_error( $tag_slugs ) ) { $tag_slugs = array(); }
+    foreach ( $products as $product ) {
+        $tag_slugs = wp_get_post_terms( $product->get_id(), 'product_tag', array( 'fields' => 'slugs' ) );
+        if ( is_wp_error( $tag_slugs ) ) {
+            $tag_slugs = array();
+        }
         $assigned = false;
-        foreach (['7-days', '20-days', '24-days', 'juice'] as $target_tag) {
-            if (in_array($target_tag, $tag_slugs)) {
-                $grouped_plans[$target_tag]['items'][] = $product;
-                $assigned = true; break;
+        foreach ( array( '7-days', '20-days', '24-days', 'juice' ) as $target_tag ) {
+            if ( in_array( $target_tag, $tag_slugs, true ) ) {
+                $grouped_plans[ $target_tag ]['items'][] = $product;
+                $assigned = true;
+                break;
             }
         }
-        if (!$assigned) { $grouped_plans['other']['items'][] = $product; }
+        if ( ! $assigned ) {
+            $grouped_plans['other']['items'][] = $product;
+        }
     }
 
     // --- MAGIC LINK CHECK ---
-    $vip_token = isset($_GET['vip_token']) ? sanitize_text_field($_GET['vip_token']) : '';
+    $vip_token          = isset( $_GET['vip_token'] ) ? sanitize_text_field( $_GET['vip_token'] ) : '';
     $is_valid_vip_token = false;
-    if (!empty($vip_token)) {
-        $active_links = get_option('cmp_active_magic_links', array());
-        if (isset($active_links[$vip_token])) {
+    if ( ! empty( $vip_token ) ) {
+        $active_links = get_option( 'cmp_active_magic_links', array() );
+        if ( isset( $active_links[ $vip_token ] ) ) {
             $is_valid_vip_token = true;
         }
     }
 
     // DETERMINE DEPOSIT REQUIREMENT ON LOAD (Default Fallback)
     $requires_deposit_init = 'true';
-    $deposit_meta_init = '';
-    
-    if ($is_valid_vip_token) {
+    $deposit_meta_init     = '';
+
+    if ( $is_valid_vip_token ) {
         $requires_deposit_init = 'false';
-    } else if ( is_user_logged_in() ) {
-        $uid = get_current_user_id();
-        $deposit_meta_init = get_user_meta($uid, '_cmp_deposit_held', true);
-        
-        if ($deposit_meta_init === '') {
-            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $uid));
-            if (intval($past_plans) > 0) {
+    } elseif ( is_user_logged_in() ) {
+        $uid               = get_current_user_id();
+        $deposit_meta_init = get_user_meta( $uid, '_cmp_deposit_held', true );
+
+        if ( $deposit_meta_init === '' ) {
+            $past_plans = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $uid ) );
+            if ( intval( $past_plans ) > 0 ) {
                 $requires_deposit_init = 'false';
-                $deposit_meta_init = 'yes';
-                update_user_meta($uid, '_cmp_deposit_held', 'yes'); // Grandfather
+                $deposit_meta_init     = 'yes';
+                update_user_meta( $uid, '_cmp_deposit_held', 'yes' );
             }
-        } else if ($deposit_meta_init === 'yes' || $deposit_meta_init === 'own_bag') {
+        } elseif ( $deposit_meta_init === 'yes' || $deposit_meta_init === 'own_bag' ) {
             $requires_deposit_init = 'false';
         }
     }
@@ -582,12 +784,14 @@ function mpc_render_checkout_wizard() {
                 <p style="color: #666; margin-bottom: 20px;">Select a meal plan to get started. You will choose your specific daily meals within your flexible quota through the Customer Portal after your subscription is confirmed.</p>
 
                 <?php
-                if ( empty($products) ) {
+                if ( empty( $products ) ) {
                     echo '<p>No products found.</p>';
                 } else {
-                    foreach ($grouped_plans as $group_data) {
-                        if ( empty($group_data['items']) ) continue;
-                        echo '<h3 class="mpc-cat-header">' . esc_html($group_data['label']) . '</h3>';
+                    foreach ( $grouped_plans as $group_data ) {
+                        if ( empty( $group_data['items'] ) ) {
+                            continue;
+                        }
+                        echo '<h3 class="mpc-cat-header">' . esc_html( $group_data['label'] ) . '</h3>';
                         echo '<div class="mpc-grid">';
                         foreach ( $group_data['items'] as $product ) {
                             $id            = $product->get_id();
@@ -595,14 +799,16 @@ function mpc_render_checkout_wizard() {
                             $price_html    = $product->get_price_html();
                             $raw_price     = $product->get_price();
                             $desc          = $product->get_short_description();
-                            $is_juice      = (stripos($title, 'juice') !== false || stripos($title, 'cleanse') !== false) ? 'true' : 'false';
-                            preg_match('/(\d+)\s*Meal/i', $title, $m);
-                            $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
-                            $display_title = str_replace(' - ', ' - <br>', esc_html($title));
-                            echo '<div class="mpc-tile" onclick="mpcSelectPlan(this, \''.esc_attr($title).'\', \''.esc_attr($raw_price).'\', '.$is_juice.', '.$id.', '.$allowed_meals.')">';
+                            $is_juice      = ( stripos( $title, 'juice' ) !== false || stripos( $title, 'cleanse' ) !== false ) ? 'true' : 'false';
+                            preg_match( '/(\d+)\s*Meal/i', $title, $m );
+                            $allowed_meals = isset( $m[1] ) ? intval( $m[1] ) : 0;
+                            $display_title = str_replace( ' - ', ' - <br>', esc_html( $title ) );
+                            echo '<div class="mpc-tile" onclick="mpcSelectPlan(this, \'' . esc_attr( $title ) . '\', \'' . esc_attr( $raw_price ) . '\', ' . $is_juice . ', ' . $id . ', ' . $allowed_meals . ')">';
                             echo '<div><div class="mpc-tile-title">' . $display_title . '</div>';
-                            echo '<div class="mpc-tile-price">' . wp_kses_post($price_html) . '</div></div>';
-                            if (!empty($desc)) echo '<div style="font-size: 0.9em; color: #666; margin-top: 10px;">' . wp_kses_post($desc) . '</div>';
+                            echo '<div class="mpc-tile-price">' . wp_kses_post( $price_html ) . '</div></div>';
+                            if ( ! empty( $desc ) ) {
+                                echo '<div style="font-size: 0.9em; color: #666; margin-top: 10px;">' . wp_kses_post( $desc ) . '</div>';
+                            }
                             echo '</div>';
                         }
                         echo '</div>';
@@ -639,27 +845,28 @@ function mpc_render_checkout_wizard() {
                             <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
                         </div>
                     </div>
-                <?php else:
+                <?php else :
                     $current_user = wp_get_current_user();
                     $saved_data   = array(
                         'first_name'      => $current_user->first_name,
                         'last_name'       => $current_user->last_name,
                         'email'           => $current_user->user_email,
-                        'phone'           => get_user_meta($current_user->ID, 'billing_phone', true),
-                        'address_1'       => get_user_meta($current_user->ID, 'billing_address_1', true),
-                        'address_2'       => get_user_meta($current_user->ID, 'billing_address_2', true),
-                        'delivery_method' => get_user_meta($current_user->ID, 'delivery_method', true),
-                        'delivery_timing' => get_user_meta($current_user->ID, 'delivery_timing', true),
-                        'time_slot'       => get_user_meta($current_user->ID, 'time_slot', true),
-                        'pickup_location' => get_user_meta($current_user->ID, 'pickup_location', true),
+                        'phone'           => get_user_meta( $current_user->ID, 'billing_phone', true ),
+                        'address_1'       => get_user_meta( $current_user->ID, 'billing_address_1', true ),
+                        'address_2'       => get_user_meta( $current_user->ID, 'billing_address_2', true ),
+                        'delivery_method' => get_user_meta( $current_user->ID, 'delivery_method', true ),
+                        'delivery_timing' => get_user_meta( $current_user->ID, 'delivery_timing', true ),
+                        'time_slot'       => get_user_meta( $current_user->ID, 'time_slot', true ),
+                        'pickup_location' => get_user_meta( $current_user->ID, 'pickup_location', true ),
+                        'allergies'       => get_user_meta( $current_user->ID, 'allergies', true ),
                     );
                 ?>
                     <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
-                        <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html($current_user->first_name); ?>!</strong></p>
+                        <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html( $current_user->first_name ); ?>!</strong></p>
                         <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
-                            <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Use my saved delivery details
+                            <input type="checkbox" id="mpc_use_saved_details" style="transform: scale(1.2);"> Use my saved delivery details (you can customize delivery timing or allergies for this specific plan)
                         </label>
-                        <script>var mpcSavedDetails = <?php echo json_encode($saved_data); ?>;</script>
+                        <script>var mpcSavedDetails = <?php echo wp_json_encode( $saved_data ); ?>;</script>
                     </div>
                 <?php endif; ?>
 
@@ -677,7 +884,7 @@ function mpc_render_checkout_wizard() {
                 <div class="mpc-form-row">
                     <div class="mpc-form-col mpc-form-group">
                         <label>Email Address *</label>
-                        <input type="email" class="mpc-form-control" id="mpc_email" placeholder="john@example.com" required <?php if(is_user_logged_in()) echo 'readonly style="background: #f1f5f9; cursor: not-allowed;"'; ?>>
+                        <input type="email" class="mpc-form-control" id="mpc_email" placeholder="john@example.com" required <?php if ( is_user_logged_in() ) echo 'readonly style="background: #f1f5f9; cursor: not-allowed;"'; ?>>
                     </div>
                     <div class="mpc-form-col mpc-form-group">
                         <label>Phone Number *</label>
@@ -685,7 +892,7 @@ function mpc_render_checkout_wizard() {
                     </div>
                 </div>
 
-                <div class="mpc-form-row" id="mpc_password_group" <?php if(is_user_logged_in()) echo 'style="display:none;"'; ?>>
+                <div class="mpc-form-row" id="mpc_password_group" <?php if ( is_user_logged_in() ) echo 'style="display:none;"'; ?>>
                     <div class="mpc-form-col mpc-form-group">
                         <label>Create Account Password *</label>
                         <div style="position: relative; display: flex; align-items: center; width: 100%;">
@@ -742,7 +949,7 @@ function mpc_render_checkout_wizard() {
                         <div id="mpc_delivery_zone_container" class="mpc-logistics-box" style="margin-top: 0;">
                             <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-weight: normal; margin: 0; line-height: 1.4;">
                                 <input type="checkbox" id="mpc_delivery_zone_check" style="transform: scale(1.3); margin-top: 2px;">
-                                <span>I confirm I am within the delivery zone. (<a href="<?php echo esc_url($map_url); ?>" target="_blank" style="color: #379237; text-decoration: underline;">View Map</a>) *</span>
+                                <span>I confirm I am within the delivery zone. (<a href="<?php echo esc_url( $map_url ); ?>" target="_blank" style="color: #379237; text-decoration: underline;">View Map</a>) *</span>
                             </label>
                         </div>
                         <div id="mpc_pickup_branch_container" class="mpc-logistics-box" style="display: none; margin-top: 0; padding-bottom: 5px;">
@@ -758,10 +965,10 @@ function mpc_render_checkout_wizard() {
                         <label>Delivery/Pickup Timing *</label>
                         <select class="mpc-form-control" id="mpc_time_slot">
                             <?php
-                            for ($i = 5; $i < 20; $i++) {
-                                $start_time = date("g:i A", strtotime("$i:00"));
-                                $end_time   = date("g:i A", strtotime(($i+1).":00"));
-                                echo '<option value="' . esc_attr($start_time . ' to ' . $end_time) . '">' . esc_html($start_time . ' to ' . $end_time) . '</option>';
+                            for ( $i = 5; $i < 20; $i++ ) {
+                                $start_time = date( 'g:i A', strtotime( "$i:00" ) );
+                                $end_time   = date( 'g:i A', strtotime( ( $i + 1 ) . ':00' ) );
+                                echo '<option value="' . esc_attr( $start_time . ' to ' . $end_time ) . '">' . esc_html( $start_time . ' to ' . $end_time ) . '</option>';
                             }
                             ?>
                         </select>
@@ -775,21 +982,21 @@ function mpc_render_checkout_wizard() {
             </div>
 
             <div id="mpc-step-3" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Dietary Info & Recipient</h2>
+                <h2 style="margin-top: 0; color: #222;">Dietary Info &amp; Recipient</h2>
                 <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Who is this plan for, and do they have any food allergies?</p>
 
-                <!-- NEW RECIPIENT FIELD FOR CUSTOM CHECKOUT -->
+                <!-- RECIPIENT FIELD FOR CUSTOM CHECKOUT -->
                 <div class="mpc-form-group" style="margin-bottom: 20px;">
                     <label style="font-weight:bold; color: #334155; margin-bottom: 5px; display: block;">
                         Recipient Name (Optional)
-                        <span title="If buying for a family member, enter their name here so they get their own dedicated calendar tab in the dashboard." style="cursor:help; font-size:0.85em; background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:50%; margin-left:5px; vertical-align:middle; display:inline-block;">?</span>
+                        <span title="If buying for a family member or a second plan, enter a name here so it gets its own dedicated calendar tab and independent delivery settings in the dashboard." style="cursor:help; font-size:0.85em; background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:50%; margin-left:5px; vertical-align:middle; display:inline-block;">?</span>
                     </label>
-                    <input type="text" class="mpc-form-control" id="mpc_recipient_name" placeholder="e.g., Sarah, John, etc.">
+                    <input type="text" class="mpc-form-control" id="mpc_recipient_name" placeholder="e.g., Sarah, John, Office Plan, etc.">
                 </div>
 
                 <div class="mpc-form-group">
-                    <label style="font-weight:bold; color: #334155; margin-bottom: 5px; display: block;">Allergies</label>
-                    <textarea class="mpc-form-control" id="mpc_allergies" rows="4" placeholder="e.g., Nuts, Shellfish, Gluten..."></textarea>
+                    <label style="font-weight:bold; color: #334155; margin-bottom: 5px; display: block;">Allergies (Saved Specifically to This Plan)</label>
+                    <textarea class="mpc-form-control" id="mpc_allergies" rows="4" placeholder="e.g., Nuts, Shellfish, Gluten... (Leave blank if no allergies for this plan)"></textarea>
                 </div>
 
                 <div class="mpc-nav-buttons">
@@ -815,17 +1022,47 @@ function mpc_render_checkout_wizard() {
         let totalSteps   = 3;
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         
-        let isUserLoggedIn  = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
-        
-        // DEPOSIT LOGIC & MAGIC LINK VARS
+        let isUserLoggedIn    = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
         let requiresDeposit   = <?php echo $requires_deposit_init; ?>;
-        let userDepositStatus = '<?php echo esc_js($deposit_meta_init); ?>';
+        let userDepositStatus = '<?php echo esc_js( $deposit_meta_init ); ?>';
         let activeVipToken    = '';
         
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
+        // Non-Blocking Toast Notification Helper
+        function mpcShowNotice(message, type) {
+            document.querySelectorAll('.mpc-toast-notice').forEach(el => el.remove());
+            const toast = document.createElement('div');
+            toast.className = 'mpc-toast-notice';
+            const isSuccess = (type === 'success');
+            Object.assign(toast.style, {
+                position: 'fixed',
+                top: '22px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: isSuccess ? '#1B5E20' : '#dc2626',
+                color: '#ffffff',
+                border: '1.5px solid ' + (isSuccess ? '#68B946' : '#fca5a5'),
+                borderRadius: '10px',
+                padding: '12px 20px',
+                fontSize: '0.9rem',
+                fontWeight: '800',
+                boxShadow: '0 10px 25px rgba(15, 23, 42, 0.25)',
+                zIndex: '100099',
+                maxWidth: '92vw',
+                textAlign: 'center'
+            });
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.transition = 'opacity 0.25s ease';
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 260);
+            }, 3800);
+        }
+
         let _mpcFreshNonce = null;
-        fetch('<?php echo admin_url("admin-ajax.php"); ?>', {
+        fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', {
             method: 'POST',
             body: new URLSearchParams({ action: 'mpc_get_nonce' })
         })
@@ -838,14 +1075,14 @@ function mpc_render_checkout_wizard() {
 
         // LIVE VIP TOKEN VALIDATION (Bypasses Page Cache)
         const urlParams = new URLSearchParams(window.location.search);
-        const urlToken = urlParams.get('vip_token');
+        const urlToken  = urlParams.get('vip_token');
 
         if (urlToken) {
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_validate_vip_token');
             formData.append('token', urlToken);
 
-            fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
+            fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(response => {
                 if (response.success) {
@@ -853,7 +1090,7 @@ function mpc_render_checkout_wizard() {
                     requiresDeposit = false;
                     mpcRenderSummary();
                 } else {
-                    alert("This VIP link is invalid. It may have expired, been used already, or been revoked by the FOH team.");
+                    mpcShowNotice("This VIP link is invalid. It may have expired, been used already, or been revoked by the FOH team.", "error");
                     window.history.replaceState({}, document.title, window.location.pathname);
                     mpcRenderSummary();
                 }
@@ -882,8 +1119,6 @@ function mpc_render_checkout_wizard() {
             }
 
             let discountedPrice = basePrice - discountAmt;
-            
-            // Core Deposit Logic
             let depositAmt = (requiresDeposit && !is100PercentFree) ? 150 : 0;
             let newTotal = discountedPrice + depositAmt;
 
@@ -900,7 +1135,7 @@ function mpc_render_checkout_wizard() {
 
             if (depositAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
-                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Click support/WhatsApp if you are an existing cutomer.</div>`;
+                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Click support/WhatsApp if you are an existing customer.</div>`;
             } else if (activeVipToken !== '' || userDepositStatus === 'own_bag') {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #8b5cf6;"><span>Thermal Bag Deposit:</span> <strong>Waived (Customer's Own Bag)</strong></div>`;
             } else if (!requiresDeposit && !is100PercentFree) {
@@ -914,7 +1149,6 @@ function mpc_render_checkout_wizard() {
 
             document.getElementById('mpc-summary-content').innerHTML = html;
 
-            // Re-attach listener for remove coupon
             let removeBtn = document.getElementById('mpc-remove-coupon');
             if (removeBtn) {
                 removeBtn.addEventListener('click', function(e) {
@@ -929,7 +1163,6 @@ function mpc_render_checkout_wizard() {
                 });
             }
         }
-        // ---- END NATIVE MATH UI ----
 
         document.getElementById('mpc-apply-coupon-btn').addEventListener('click', function() {
             let code     = document.getElementById('mpc_coupon_input').value.trim().toUpperCase();
@@ -948,12 +1181,12 @@ function mpc_render_checkout_wizard() {
             
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_validate_coupon');
-            formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
+            formData.append('nonce', _mpcFreshNonce || '<?php echo esc_js( wp_create_nonce( "mpc_checkout_nonce" ) ); ?>');
             formData.append('coupon_code', code);
             formData.append('product_id', checkoutData.productId);
             formData.append('email', userEmail);
             
-            fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
+            fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(response => {
                 if (response.success) {
@@ -998,26 +1231,30 @@ function mpc_render_checkout_wizard() {
         });
 
         function populateFields(data) {
-            if(data.first_name) document.getElementById('mpc_first_name').value = data.first_name;
-            if(data.last_name)  document.getElementById('mpc_last_name').value  = data.last_name;
-            if(data.email) {
+            if (data.first_name) document.getElementById('mpc_first_name').value = data.first_name;
+            if (data.last_name)  document.getElementById('mpc_last_name').value  = data.last_name;
+            if (data.email) {
                 let ef = document.getElementById('mpc_email');
                 ef.value = data.email; ef.readOnly = true;
                 ef.style.background = '#f1f5f9'; ef.style.cursor = 'not-allowed';
             }
-            if(data.phone)     document.getElementById('mpc_phone').value      = data.phone;
-            if(data.address_1) document.getElementById('mpc_address_1').value  = data.address_1;
-            if(data.address_2) document.getElementById('mpc_address_2').value  = data.address_2;
-            if(data.delivery_method) {
+            if (data.phone)     document.getElementById('mpc_phone').value     = data.phone;
+            if (data.address_1) document.getElementById('mpc_address_1').value = data.address_1;
+            if (data.address_2) document.getElementById('mpc_address_2').value = data.address_2;
+            if (data.delivery_method) {
                 document.getElementById('mpc_delivery_method').value = data.delivery_method;
                 document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
             }
-            if(data.delivery_timing) document.getElementById('mpc_delivery_timing').value = data.delivery_timing;
-            if(data.time_slot)       document.getElementById('mpc_time_slot').value       = data.time_slot;
-            if(data.pickup_location && data.delivery_method === 'Pickup') {
+            if (data.delivery_timing) document.getElementById('mpc_delivery_timing').value = data.delivery_timing;
+            if (data.time_slot)       document.getElementById('mpc_time_slot').value       = data.time_slot;
+            if (data.pickup_location && data.delivery_method === 'Pickup') {
                 document.getElementById('mpc_pickup_branch').value = data.pickup_location;
             }
-            mpcSaveState(); updateLogisticsSummary();
+            if (typeof data.allergies !== 'undefined' && data.allergies !== null) {
+                document.getElementById('mpc_allergies').value = data.allergies;
+            }
+            mpcSaveState();
+            updateLogisticsSummary();
         }
 
         let useSavedCheckbox = document.getElementById('mpc_use_saved_details');
@@ -1028,7 +1265,7 @@ function mpc_render_checkout_wizard() {
         }
 
         let showLogin = document.getElementById('mpc-show-login');
-        if(showLogin) {
+        if (showLogin) {
             showLogin.addEventListener('click', function(e) {
                 e.preventDefault();
                 document.getElementById('mpc-login-form').style.display = 'block';
@@ -1037,24 +1274,24 @@ function mpc_render_checkout_wizard() {
         }
 
         let doLoginBtn = document.getElementById('mpc-do-login-btn');
-        if(doLoginBtn) {
+        if (doLoginBtn) {
             doLoginBtn.addEventListener('click', function() {
                 let log = document.getElementById('mpc_login_email').value;
                 let pwd = document.getElementById('mpc_login_pwd').value;
                 let msg = document.getElementById('mpc-login-msg');
-                if(!log || !pwd) { msg.innerText = "Please enter email and password."; return; }
+                if (!log || !pwd) { msg.innerText = "Please enter email and password."; return; }
                 let btnText = this.innerText;
                 this.innerText = 'Logging in...'; this.disabled = true;
                 
                 let formData = new URLSearchParams();
                 formData.append('action', 'mpc_login_user');
-                formData.append('nonce', _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>');
+                formData.append('nonce', _mpcFreshNonce || '<?php echo esc_js( wp_create_nonce( "mpc_checkout_nonce" ) ); ?>');
                 formData.append('log', log); formData.append('pwd', pwd);
                 
-                fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
+                fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', { method: 'POST', body: formData })
                 .then(res => res.json())
                 .then(response => {
-                    if(response.success) {
+                    if (response.success) {
                         isUserLoggedIn = true;
                         requiresDeposit = response.data.requires_deposit; 
                         userDepositStatus = response.data.deposit_status;
@@ -1063,10 +1300,10 @@ function mpc_render_checkout_wizard() {
                         document.getElementById('mpc_password_group').style.display = 'none';
                         let wHTML = '<div style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">';
                         wHTML += '<p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, ' + response.data.first_name + '!</strong></p>';
-                        wHTML += '<label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;"><input type="checkbox" id="mpc_use_saved_details_ajax" style="transform: scale(1.2);"> Use my saved delivery details</label></div>';
+                        wHTML += '<label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;"><input type="checkbox" id="mpc_use_saved_details_ajax" style="transform: scale(1.2);"> Use my saved delivery details (you can customize delivery timing or allergies for this specific plan)</label></div>';
                         document.getElementById('mpc-login-section').innerHTML = wHTML;
                         document.getElementById('mpc_use_saved_details_ajax').addEventListener('change', function() {
-                            if(this.checked) populateFields(response.data);
+                            if (this.checked) populateFields(response.data);
                         });
                         
                         mpcRenderSummary(); 
@@ -1093,37 +1330,37 @@ function mpc_render_checkout_wizard() {
                 pickupBranch:      document.getElementById('mpc_pickup_branch').value,
                 deliveryZoneCheck: document.getElementById('mpc_delivery_zone_check').checked,
                 allergies:         document.getElementById('mpc_allergies').value,
-                recipientName:     document.getElementById('mpc_recipient_name').value, // NEW RECIPIENT SAVE
+                recipientName:     document.getElementById('mpc_recipient_name').value,
                 couponCode:        appliedCoupon.code,
             };
             localStorage.setItem('mpcCheckoutState', JSON.stringify(state));
         }
 
         document.querySelectorAll('.mpc-form-control, #mpc_delivery_zone_check').forEach(el => {
-            if(el) { el.addEventListener('input', mpcSaveState); el.addEventListener('change', mpcSaveState); }
+            if (el) { el.addEventListener('input', mpcSaveState); el.addEventListener('change', mpcSaveState); }
         });
 
         document.addEventListener('DOMContentLoaded', function() {
             const stateJSON = localStorage.getItem('mpcCheckoutState');
-            if(stateJSON) {
+            if (stateJSON) {
                 try {
                     const state = JSON.parse(stateJSON);
-                    if(state.firstName)  document.getElementById('mpc_first_name').value = state.firstName;
-                    if(state.lastName)   document.getElementById('mpc_last_name').value  = state.lastName;
-                    if(state.email && !isUserLoggedIn) document.getElementById('mpc_email').value = state.email;
-                    if(state.phone)      document.getElementById('mpc_phone').value      = state.phone;
-                    if(state.address1)   document.getElementById('mpc_address_1').value  = state.address1;
-                    if(state.address2)   document.getElementById('mpc_address_2').value  = state.address2;
-                    if(state.deliveryMethod) {
+                    if (state.firstName)  document.getElementById('mpc_first_name').value = state.firstName;
+                    if (state.lastName)   document.getElementById('mpc_last_name').value  = state.lastName;
+                    if (state.email && !isUserLoggedIn) document.getElementById('mpc_email').value = state.email;
+                    if (state.phone)      document.getElementById('mpc_phone').value      = state.phone;
+                    if (state.address1)   document.getElementById('mpc_address_1').value  = state.address1;
+                    if (state.address2)   document.getElementById('mpc_address_2').value  = state.address2;
+                    if (state.deliveryMethod) {
                         document.getElementById('mpc_delivery_method').value = state.deliveryMethod;
                         document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
                     }
-                    if(state.deliveryTiming)    document.getElementById('mpc_delivery_timing').value        = state.deliveryTiming;
-                    if(state.timeSlot)          document.getElementById('mpc_time_slot').value              = state.timeSlot;
-                    if(state.pickupBranch)      document.getElementById('mpc_pickup_branch').value          = state.pickupBranch;
-                    if(state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked  = state.deliveryZoneCheck;
-                    if(state.allergies)         document.getElementById('mpc_allergies').value              = state.allergies;
-                    if(state.recipientName)     document.getElementById('mpc_recipient_name').value         = state.recipientName; // NEW RECIPIENT LOAD
+                    if (state.deliveryTiming)    document.getElementById('mpc_delivery_timing').value       = state.deliveryTiming;
+                    if (state.timeSlot)          document.getElementById('mpc_time_slot').value             = state.timeSlot;
+                    if (state.pickupBranch)      document.getElementById('mpc_pickup_branch').value         = state.pickupBranch;
+                    if (state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked = state.deliveryZoneCheck;
+                    if (state.allergies)         document.getElementById('mpc_allergies').value             = state.allergies;
+                    if (state.recipientName)     document.getElementById('mpc_recipient_name').value        = state.recipientName;
                     
                     document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
                 } catch(e) {}
@@ -1136,7 +1373,6 @@ function mpc_render_checkout_wizard() {
             tileElement.classList.add('selected');
             document.getElementById('btn-next-1').disabled = false;
             
-            // Auto-clear coupon if switching plans to ensure validation runs again
             if (appliedCoupon.code) {
                 appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
                 document.getElementById('mpc_coupon_input').value    = '';
@@ -1146,7 +1382,6 @@ function mpc_render_checkout_wizard() {
                 mpcSaveState();
             }
 
-            // --- SHOW COUPON SECTION NOW THAT A PLAN IS SELECTED ---
             document.getElementById('mpc-coupon-section').style.display = 'block';
 
             if (isJuice) {
@@ -1218,16 +1453,27 @@ function mpc_render_checkout_wizard() {
                 let pwdVal = document.getElementById('mpc_password').value;
                 if (!document.getElementById('mpc_first_name').value || !document.getElementById('mpc_email').value ||
                     (!isUserLoggedIn && !pwdVal) || !document.getElementById('mpc_phone').value || !document.getElementById('mpc_address_1').value) {
-                    alert('Please fill out all mandatory fields (Name, Email, Phone, Address, Password).'); return;
+                    mpcShowNotice('Please fill out all mandatory fields (Name, Email, Phone, Address, Password).', 'error');
+                    return;
                 }
                 let method = document.getElementById('mpc_delivery_method').value;
-                if (method === 'Delivery' && !document.getElementById('mpc_delivery_zone_check').checked) { alert('Please confirm you are within the delivery zone to proceed.'); return; }
-                if (method === 'Pickup'   && !document.getElementById('mpc_pickup_branch').value)         { alert('Please select a pickup branch.'); return; }
-                if (checkoutData.isJuice) { mpcSubmitOrder(document.getElementById('btn-next-2')); return; }
+                if (method === 'Delivery' && !document.getElementById('mpc_delivery_zone_check').checked) {
+                    mpcShowNotice('Please confirm you are within the delivery zone to proceed.', 'error');
+                    return;
+                }
+                if (method === 'Pickup' && !document.getElementById('mpc_pickup_branch').value) {
+                    mpcShowNotice('Please select a pickup branch.', 'error');
+                    return;
+                }
+                if (checkoutData.isJuice) {
+                    mpcSubmitOrder(document.getElementById('btn-next-2'));
+                    return;
+                }
             }
             
             if (direction === 1 && currentStep === 3 && !checkoutData.isJuice) {
-                mpcSubmitOrder(document.getElementById('btn-next-3')); return;
+                mpcSubmitOrder(document.getElementById('btn-next-3'));
+                return;
             }
 
             document.getElementById('mpc-step-' + currentStep).classList.remove('active');
@@ -1249,7 +1495,7 @@ function mpc_render_checkout_wizard() {
         function mpcSubmitOrder(btn) {
             btn.innerText = 'Redirecting to Checkout...'; btn.disabled = true;
 
-            let activeNonce = _mpcFreshNonce || '<?php echo wp_create_nonce("mpc_checkout_nonce"); ?>';
+            let activeNonce = _mpcFreshNonce || '<?php echo esc_js( wp_create_nonce( "mpc_checkout_nonce" ) ); ?>';
             let formData = new URLSearchParams();
             formData.append('action',          'mpc_process_order');
             formData.append('nonce',           activeNonce);
@@ -1268,21 +1514,21 @@ function mpc_render_checkout_wizard() {
             formData.append('allergies',       document.getElementById('mpc_allergies').value);
             formData.append('recipient_name',  document.getElementById('mpc_recipient_name').value);
             formData.append('coupon_code',     appliedCoupon.code);
-            formData.append('vip_token',       activeVipToken); // ADD MAGIC LINK TOKEN
+            formData.append('vip_token',       activeVipToken);
 
-            fetch('<?php echo admin_url("admin-ajax.php"); ?>', { method: 'POST', body: formData })
+            fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(response => {
                 if (response.success) {
                     localStorage.removeItem('mpcCheckoutState');
                     window.location.href = response.data.payment_url;
                 } else {
-                    alert('Error: ' + (response.data || 'Unknown error. Please contact support.'));
+                    mpcShowNotice('Error: ' + (response.data || 'Unknown error. Please contact support.'), 'error');
                     btn.innerText = 'Proceed to Checkout \u2192'; btn.disabled = false;
                 }
             })
             .catch(error => {
-                alert('Error: ' + (error.message || 'An unexpected error occurred. Please try again.'));
+                mpcShowNotice('Error: ' + (error.message || 'An unexpected error occurred. Please try again.'), 'error');
                 btn.innerText = 'Proceed to Checkout \u2192'; btn.disabled = false;
             });
         }
@@ -1295,7 +1541,7 @@ function mpc_render_checkout_wizard() {
 }
 
 // ==========================================
-// 8. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
+// 9. WOOCOMMERCE PAYMENT & SUCCESS HANDLERS
 // ==========================================
 add_action( 'woocommerce_order_status_processing', 'mpc_activate_subscription_on_payment', 10, 1 );
 add_action( 'woocommerce_order_status_completed',  'mpc_activate_subscription_on_payment', 10, 1 );
@@ -1303,18 +1549,16 @@ add_action( 'woocommerce_order_status_completed',  'mpc_activate_subscription_on
 function mpc_activate_subscription_on_payment( $order_id ) {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $wpdb->update($table_subs, array('status' => 'active'), array('wc_order_id' => $order_id, 'status' => 'pending'));
+    $wpdb->update( $table_subs, array( 'status' => 'active' ), array( 'wc_order_id' => $order_id, 'status' => 'pending' ) );
 
-    // NEW DEPOSIT TAG APPLIED ONLY AFTER PAYMENT
-    $order = wc_get_order($order_id);
-    if ($order) {
-        $customer_id = $order->get_customer_id();
-        // Do not overwrite "own_bag" if it was already applied during checkout via Magic Link
-        $current_meta = get_user_meta($customer_id, '_cmp_deposit_held', true);
-        if ($current_meta !== 'own_bag') {
-            foreach ($order->get_items('fee') as $item) {
-                if (strpos($item->get_name(), 'Thermal Bag Deposit') !== false) {
-                    update_user_meta($customer_id, '_cmp_deposit_held', 'yes');
+    $order = wc_get_order( $order_id );
+    if ( $order ) {
+        $customer_id  = $order->get_customer_id();
+        $current_meta = get_user_meta( $customer_id, '_cmp_deposit_held', true );
+        if ( $current_meta !== 'own_bag' ) {
+            foreach ( $order->get_items( 'fee' ) as $item ) {
+                if ( strpos( $item->get_name(), 'Thermal Bag Deposit' ) !== false ) {
+                    update_user_meta( $customer_id, '_cmp_deposit_held', 'yes' );
                     break;
                 }
             }
@@ -1324,54 +1568,60 @@ function mpc_activate_subscription_on_payment( $order_id ) {
 
 add_action( 'woocommerce_thankyou', 'mpc_add_dashboard_button_to_thankyou', 10, 1 );
 function mpc_add_dashboard_button_to_thankyou( $order_id ) {
-    $portal_url = site_url('/my-meal-portal/');
+    $portal_url = site_url( '/my-meal-portal/' );
     echo '<div style="margin-top: 40px; padding: 30px; background: #f8fafc; border: 2px solid #379237; border-radius: 8px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">';
     echo '<h3 style="color: #379237; margin-top: 0; font-size: 1.5em;">Your Meal Plan is Ready!</h3>';
     echo '<p style="color: #475569; margin-bottom: 25px; font-size: 1.1em;">Head over to your personal dashboard to start scheduling your meals and tracking your macros.</p>';
-    echo '<a href="' . esc_url($portal_url) . '" style="background: #46b450; color: #fff; padding: 15px 35px; border-radius: 4px; text-decoration: none; font-weight: bold; font-size: 1.1em; display: inline-block;">Go to My Dashboard &rarr;</a>';
+    echo '<a href="' . esc_url( $portal_url ) . '" style="background: #46b450; color: #fff; padding: 15px 35px; border-radius: 4px; text-decoration: none; font-weight: bold; font-size: 1.1em; display: inline-block;">Go to My Dashboard &rarr;</a>';
     echo '</div>';
 }
 
 add_filter( 'woocommerce_pay_order_button_text', 'mpc_change_pay_button_text' );
-function mpc_change_pay_button_text( $text ) { return 'Place the Order'; }
+function mpc_change_pay_button_text( $text ) {
+    return 'Place the Order';
+}
 
 // ==========================================
-// 9. CUSTOMER DASHBOARD PROFILE WIDGET
+// 10. CUSTOMER DASHBOARD PROFILE WIDGET
 // ==========================================
 add_shortcode( 'meal_plan_customer_profile', 'mpc_render_customer_profile' );
 function mpc_render_customer_profile() {
-    if ( ! is_user_logged_in() ) { return ''; }
-    $current_user     = wp_get_current_user();
-    $user_id          = $current_user->ID;
-    $phone            = get_user_meta($user_id, 'billing_phone', true);
-    $method           = get_user_meta($user_id, 'delivery_method', true);
-    $timing           = get_user_meta($user_id, 'delivery_timing', true);
-    $time_slot        = get_user_meta($user_id, 'time_slot', true);
-    $pickup           = get_user_meta($user_id, 'pickup_location', true);
-    $allergies        = get_user_meta($user_id, 'allergies', true);
-    $address_1        = get_user_meta($user_id, 'billing_address_1', true);
-    $address_2        = get_user_meta($user_id, 'billing_address_2', true);
-    $city             = get_user_meta($user_id, 'billing_city', true);
-    $full_address     = array_filter([$address_1, $address_2, $city]);
-    $address_display  = !empty($full_address) ? implode(', ', $full_address) : 'Address not provided';
-    $allergies_display = !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded';
-    $method_display   = $method ?: 'N/A';
-    if ($method === 'Pickup' && !empty($pickup)) $method_display .= ' (' . esc_html($pickup) . ')';
+    if ( ! is_user_logged_in() ) {
+        return '';
+    }
+    $current_user      = wp_get_current_user();
+    $user_id           = $current_user->ID;
+    $phone             = get_user_meta( $user_id, 'billing_phone', true );
+    $method            = get_user_meta( $user_id, 'delivery_method', true );
+    $timing            = get_user_meta( $user_id, 'delivery_timing', true );
+    $time_slot         = get_user_meta( $user_id, 'time_slot', true );
+    $pickup            = get_user_meta( $user_id, 'pickup_location', true );
+    $allergies         = get_user_meta( $user_id, 'allergies', true );
+    $address_1         = get_user_meta( $user_id, 'billing_address_1', true );
+    $address_2         = get_user_meta( $user_id, 'billing_address_2', true );
+    $city              = get_user_meta( $user_id, 'billing_city', true );
+    $full_address      = array_filter( array( $address_1, $address_2, $city ) );
+    $address_display   = ! empty( $full_address ) ? implode( ', ', $full_address ) : 'Address not provided';
+    $allergies_display = ! empty( $allergies ) ? esc_html( $allergies ) : 'No Allergies Recorded';
+    $method_display    = $method ?: 'N/A';
+    if ( $method === 'Pickup' && ! empty( $pickup ) ) {
+        $method_display .= ' (' . esc_html( $pickup ) . ')';
+    }
     ob_start();
     ?>
     <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between;">
         <div style="flex: 1; min-width: 250px;">
             <h3 style="margin-top: 0; color: #379237; font-size: 1.3em; margin-bottom: 15px;">Account Details</h3>
-            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Name:</strong> <?php echo esc_html($current_user->first_name . ' ' . $current_user->last_name); ?></p>
-            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Email:</strong> <?php echo esc_html($current_user->user_email); ?></p>
-            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
-            <p style="margin: 0; color: #334155;"><strong>Address:</strong> <?php echo esc_html($address_display); ?></p>
+            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Name:</strong> <?php echo esc_html( $current_user->first_name . ' ' . $current_user->last_name ); ?></p>
+            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Email:</strong> <?php echo esc_html( $current_user->user_email ); ?></p>
+            <p style="margin: 0 0 8px 0; color: #334155;"><strong>Phone:</strong> <?php echo esc_html( $phone ?: 'N/A' ); ?></p>
+            <p style="margin: 0; color: #334155;"><strong>Address:</strong> <?php echo esc_html( $address_display ); ?></p>
         </div>
         <div style="flex: 1; min-width: 250px; background: #f8fafc; padding: 15px; border-radius: 6px; border: 1px solid #f1f5f9;">
             <h3 style="margin-top: 0; color: #0f172a; font-size: 1.1em; margin-bottom: 12px;">Active Logistics</h3>
-            <p style="margin: 0 0 8px 0; color: #475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
-            <p style="margin: 0 0 8px 0; color: #475569;"><strong>Receive By:</strong> <?php echo esc_html($timing ?: 'N/A'); ?></p>
-            <p style="margin: 0 0 8px 0; color: #475569;"><strong>Time Slot:</strong> <?php echo esc_html($time_slot ?: 'N/A'); ?></p>
+            <p style="margin: 0 0 8px 0; color: #475569;"><strong>Method:</strong> <?php echo esc_html( $method_display ); ?></p>
+            <p style="margin: 0 0 8px 0; color: #475569;"><strong>Receive By:</strong> <?php echo esc_html( $timing ?: 'N/A' ); ?></p>
+            <p style="margin: 0 0 8px 0; color: #475569;"><strong>Time Slot:</strong> <?php echo esc_html( $time_slot ?: 'N/A' ); ?></p>
             <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #cbd5e1;">
                 <p style="margin: 0; color: #b45309;"><strong>Allergies:</strong> <?php echo $allergies_display; ?></p>
             </div>
@@ -1382,44 +1632,47 @@ function mpc_render_customer_profile() {
 }
 
 // ==========================================
-// 10. PAYMENT VERIFICATION BRIDGE
+// 11. PAYMENT VERIFICATION BRIDGE
 // ==========================================
-add_action('template_redirect', 'mpc_verify_ngenius_payment_return');
+add_action( 'template_redirect', 'mpc_verify_ngenius_payment_return' );
 function mpc_verify_ngenius_payment_return() {
-    if ( is_wc_endpoint_url( 'order-received' ) && isset($_GET['ref']) ) {
+    if ( is_wc_endpoint_url( 'order-received' ) && isset( $_GET['ref'] ) ) {
         global $wp;
         $order_id = absint( $wp->query_vars['order-received'] );
         $order    = wc_get_order( $order_id );
-        if ( ! $order || $order->is_paid() ) return;
+        if ( ! $order || $order->is_paid() ) {
+            return;
+        }
 
-        $reference     = sanitize_text_field($_GET['ref']);
+        $reference     = sanitize_text_field( $_GET['ref'] );
         $main_site_url = 'https://thecyclehub.com';
         $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/verify';
 
         $response = wp_remote_post( $endpoint, array(
             'headers' => array( 'Content-Type' => 'application/json', 'x-bistro-token' => BISTRO_BRIDGE_SECRET ),
-            'body'    => wp_json_encode( array('reference' => $reference) ),
+            'body'    => wp_json_encode( array( 'reference' => $reference ) ),
             'timeout' => 20,
-        ));
+        ) );
 
         if ( is_wp_error( $response ) ) {
-            $order->add_order_note('Bridge Error: ' . $response->get_error_message()); return;
+            $order->add_order_note( 'Bridge Error: ' . $response->get_error_message() );
+            return;
         }
 
         $response_code = wp_remote_retrieve_response_code( $response );
         $body          = json_decode( wp_remote_retrieve_body( $response ), true );
 
-        if ( $response_code === 200 && isset($body['success']) && $body['success'] === true ) {
+        if ( $response_code === 200 && isset( $body['success'] ) && $body['success'] === true ) {
             $state = $body['state'];
-            if ( in_array( $state, array('CAPTURED', 'AUTHORISED', 'PURCHASED'), true ) ) {
+            if ( in_array( $state, array( 'CAPTURED', 'AUTHORISED', 'PURCHASED' ), true ) ) {
                 $order->payment_complete( $reference );
-                $order->add_order_note('Payment captured via N-Genius Bridge. State: ' . $state . ' | Ref: ' . $reference);
+                $order->add_order_note( 'Payment captured via N-Genius Bridge. State: ' . $state . ' | Ref: ' . $reference );
             } else {
-                $order->update_status('failed', 'Payment declined. State: ' . $state);
+                $order->update_status( 'failed', 'Payment declined. State: ' . $state );
             }
         } else {
-            $error_msg = isset($body['message']) ? $body['message'] : 'HTTP ' . $response_code;
-            $order->add_order_note('Bridge Verification Failed: ' . $error_msg);
+            $error_msg = isset( $body['message'] ) ? $body['message'] : 'HTTP ' . $response_code;
+            $order->add_order_note( 'Bridge Verification Failed: ' . $error_msg );
         }
     }
 }
