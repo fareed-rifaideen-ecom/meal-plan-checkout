@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-plan-checkout
- * Description: Streamlined custom checkout wizard with configurable sign-in layouts, dynamic Day-Before & Same-Day time slots, summary-card promo codes, alternate-email ordering, and strict post-payment subscription creation.
- * Version: 4.4.0
+ * Description: Streamlined custom checkout wizard with configurable sign-in layouts, 4-way Delivery & Store Pick-up time slot matrix, summary-card promo codes, embedded alternate-email toggle, and strict post-payment subscription creation.
+ * Version: 4.5.0
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  * Author URI: https://fareed-rifaideen.netlify.app
  */
@@ -36,7 +36,7 @@ function mpc_disable_checkout_page_caching() {
 }
 
 // ==========================================
-// 0.1 PER-PLAN SUBSCRIPTION LOGISTICS SCHEMA & TIME SLOT HELPERS
+// 0.1 PER-PLAN SUBSCRIPTION LOGISTICS SCHEMA & 4-WAY TIME SLOT HELPERS
 // ==========================================
 function mpc_ensure_subscription_logistics_columns() {
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
@@ -130,7 +130,7 @@ function mpc_record_user_logistics_profile( $user_id, $sub_id, $profile_data = a
 }
 
 /**
- * Returns the master catalog of standard hourly time slot presets for the admin visual builder.
+ * Returns the master catalog of standard hourly time slot presets for the 4-way visual builder.
  */
 function mpc_get_master_preset_time_slots() {
     $slots = array();
@@ -144,31 +144,80 @@ function mpc_get_master_preset_time_slots() {
 }
 
 /**
- * Retrieves the active time slots for "Deliver Day Before" and "Deliver Same Day"
- * configured in WP Admin > Meal Portal > Checkout Settings.
+ * Retrieves the 4-Way Time Slot Matrix configured in WP Admin > Meal Portal > Checkout Settings:
+ *  1. Home/Office Delivery — Day Before (`mpc_slots_day_before`)
+ *  2. Home/Office Delivery — Same Day (`mpc_slots_same_day`)
+ *  3. Store Pick-up — Day Before (`mpc_slots_pickup_day_before`)
+ *  4. Store Pick-up — Same Day (`mpc_slots_pickup_same_day`)
  */
 function mpc_get_configured_time_slots() {
-    $default_all = array();
-    for ( $i = 5; $i < 20; $i++ ) {
-        $start_time    = date( 'g:i A', strtotime( "$i:00" ) );
-        $end_time      = date( 'g:i A', strtotime( ( $i + 1 ) . ':00' ) );
-        $default_all[] = $start_time . ' to ' . $end_time;
-    }
+    $default_evening = array(
+        '5:00 PM to 6:00 PM',
+        '6:00 PM to 7:00 PM',
+        '7:00 PM to 8:00 PM',
+        '5:00 PM to 8:00 PM',
+    );
+    $default_morning_del = array(
+        '5:00 AM to 6:00 AM',
+        '6:00 AM to 7:00 AM',
+        '7:00 AM to 8:00 AM',
+        '8:00 AM to 9:00 AM',
+        '9:00 AM to 10:00 AM',
+        '10:00 AM to 11:00 AM',
+        '11:00 AM to 12:00 PM',
+    );
+    $default_morning_pk = array(
+        '8:00 AM to 9:00 AM',
+        '9:00 AM to 10:00 AM',
+        '10:00 AM to 11:00 AM',
+        '11:00 AM to 12:00 PM',
+    );
 
-    $day_before = get_option( 'mpc_slots_day_before', null );
-    if ( ! is_array( $day_before ) || empty( $day_before ) ) {
-        $day_before = $default_all;
+    // 1. Delivery — Day Before
+    $del_day_before = get_option( 'mpc_slots_day_before', null );
+    if ( ! is_array( $del_day_before ) || empty( $del_day_before ) ) {
+        $del_day_before = $default_evening;
     }
+    $del_day_before = array_values( array_unique( array_filter( array_map( 'trim', $del_day_before ) ) ) );
 
-    $same_day = get_option( 'mpc_slots_same_day', null );
-    if ( ! is_array( $same_day ) || empty( $same_day ) ) {
-        $same_day = $default_all;
+    // 2. Delivery — Same Day
+    $del_same_day = get_option( 'mpc_slots_same_day', null );
+    if ( ! is_array( $del_same_day ) || empty( $del_same_day ) ) {
+        $del_same_day = $default_morning_del;
     }
+    $del_same_day = array_values( array_unique( array_filter( array_map( 'trim', $del_same_day ) ) ) );
+
+    // 3. Store Pick-up — Day Before
+    $pk_day_before = get_option( 'mpc_slots_pickup_day_before', null );
+    if ( ! is_array( $pk_day_before ) || empty( $pk_day_before ) ) {
+        $pk_day_before = array_values( array_filter( $del_day_before, function( $s ) {
+            return ! preg_match( '/^(5|6|7):00 AM/i', $s );
+        } ) );
+        if ( empty( $pk_day_before ) ) {
+            $pk_day_before = $default_evening;
+        }
+    }
+    $pk_day_before = array_values( array_unique( array_filter( array_map( 'trim', $pk_day_before ) ) ) );
+
+    // 4. Store Pick-up — Same Day
+    $pk_same_day = get_option( 'mpc_slots_pickup_same_day', null );
+    if ( ! is_array( $pk_same_day ) || empty( $pk_same_day ) ) {
+        $pk_same_day = array_values( array_filter( $del_same_day, function( $s ) {
+            return ! preg_match( '/^(5|6|7):00 AM/i', $s );
+        } ) );
+        if ( empty( $pk_same_day ) ) {
+            $pk_same_day = $default_morning_pk;
+        }
+    }
+    $pk_same_day = array_values( array_unique( array_filter( array_map( 'trim', $pk_same_day ) ) ) );
 
     return array(
-        'day_before'           => array_values( array_unique( array_filter( array_map( 'trim', $day_before ) ) ) ),
-        'same_day'             => array_values( array_unique( array_filter( array_map( 'trim', $same_day ) ) ) ),
-        'pickup_hide_early_am' => ( get_option( 'mpc_pickup_hide_early_am', '1' ) === '1' ),
+        'delivery_day_before' => $del_day_before,
+        'delivery_same_day'   => $del_same_day,
+        'pickup_day_before'   => $pk_day_before,
+        'pickup_same_day'     => $pk_same_day,
+        'day_before'          => $del_day_before,
+        'same_day'            => $del_same_day,
     );
 }
 
@@ -230,45 +279,37 @@ function mpc_render_checkout_settings_admin_page() {
         }
     }
 
-    // 3. Handle Saving Checkout Settings & Time Slots
+    // 3. Handle Saving Checkout Settings & 4-Way Time Slot Matrix
     if ( isset( $_POST['mpc_save_checkout_settings'] ) && check_admin_referer( 'mpc_checkout_settings_action', 'mpc_checkout_settings_nonce' ) ) {
         $login_mode = sanitize_text_field( wp_unslash( $_POST['mpc_checkout_login_mode'] ?? 'l1' ) );
         if ( ! in_array( $login_mode, array( 'l1', 'l3', 'both', 'step2' ), true ) ) {
             $login_mode = 'l1';
         }
-        $autofill_default     = isset( $_POST['mpc_checkout_autofill_default'] ) ? '1' : '0';
-        $email_guard          = isset( $_POST['mpc_checkout_email_guard'] ) ? '1' : '0';
-        $pickup_hide_early_am = isset( $_POST['mpc_pickup_hide_early_am'] ) ? '1' : '0';
+        $autofill_default = isset( $_POST['mpc_checkout_autofill_default'] ) ? '1' : '0';
+        $email_guard      = isset( $_POST['mpc_checkout_email_guard'] ) ? '1' : '0';
 
-        // Parse "Deliver Day Before" checked presets + custom text lines
-        $db_checked = isset( $_POST['mpc_db_preset_slots'] ) && is_array( $_POST['mpc_db_preset_slots'] )
-            ? array_map( 'sanitize_text_field', wp_unslash( $_POST['mpc_db_preset_slots'] ) )
-            : array();
-        $db_custom_raw = isset( $_POST['mpc_db_custom_slots'] ) ? sanitize_textarea_field( wp_unslash( $_POST['mpc_db_custom_slots'] ) ) : '';
-        $db_custom_arr = array_filter( array_map( 'trim', preg_split( '/[\r\n,]+/', $db_custom_raw ) ) );
-        $final_db_slots = array_values( array_unique( array_merge( $db_checked, $db_custom_arr ) ) );
+        $parse_slot_group = function( $preset_key, $custom_key, $fallback_default ) {
+            $checked = isset( $_POST[ $preset_key ] ) && is_array( $_POST[ $preset_key ] )
+                ? array_map( 'sanitize_text_field', wp_unslash( $_POST[ $preset_key ] ) )
+                : array();
+            $custom_raw = isset( $_POST[ $custom_key ] ) ? sanitize_textarea_field( wp_unslash( $_POST[ $custom_key ] ) ) : '';
+            $custom_arr = array_filter( array_map( 'trim', preg_split( '/[\r\n,]+/', $custom_raw ) ) );
+            $merged     = array_values( array_unique( array_filter( array_merge( $checked, $custom_arr ) ) ) );
+            return ! empty( $merged ) ? $merged : $fallback_default;
+        };
 
-        // Parse "Deliver Same Day" checked presets + custom text lines
-        $sd_checked = isset( $_POST['mpc_sd_preset_slots'] ) && is_array( $_POST['mpc_sd_preset_slots'] )
-            ? array_map( 'sanitize_text_field', wp_unslash( $_POST['mpc_sd_preset_slots'] ) )
-            : array();
-        $sd_custom_raw = isset( $_POST['mpc_sd_custom_slots'] ) ? sanitize_textarea_field( wp_unslash( $_POST['mpc_sd_custom_slots'] ) ) : '';
-        $sd_custom_arr = array_filter( array_map( 'trim', preg_split( '/[\r\n,]+/', $sd_custom_raw ) ) );
-        $final_sd_slots = array_values( array_unique( array_merge( $sd_checked, $sd_custom_arr ) ) );
-
-        if ( empty( $final_db_slots ) ) {
-            $final_db_slots = array( '5:00 PM to 8:00 PM' );
-        }
-        if ( empty( $final_sd_slots ) ) {
-            $final_sd_slots = array( '8:00 AM to 9:00 AM' );
-        }
+        $final_del_db = $parse_slot_group( 'mpc_db_preset_slots', 'mpc_db_custom_slots', array( '5:00 PM to 8:00 PM' ) );
+        $final_del_sd = $parse_slot_group( 'mpc_sd_preset_slots', 'mpc_sd_custom_slots', array( '8:00 AM to 9:00 AM' ) );
+        $final_pk_db  = $parse_slot_group( 'mpc_pk_db_preset_slots', 'mpc_pk_db_custom_slots', array( '5:00 PM to 8:00 PM' ) );
+        $final_pk_sd  = $parse_slot_group( 'mpc_pk_sd_preset_slots', 'mpc_pk_sd_custom_slots', array( '8:00 AM to 9:00 AM' ) );
 
         update_option( 'mpc_checkout_login_mode', $login_mode );
         update_option( 'mpc_checkout_autofill_default', $autofill_default );
         update_option( 'mpc_checkout_email_guard', $email_guard );
-        update_option( 'mpc_pickup_hide_early_am', $pickup_hide_early_am );
-        update_option( 'mpc_slots_day_before', $final_db_slots );
-        update_option( 'mpc_slots_same_day', $final_sd_slots );
+        update_option( 'mpc_slots_day_before', $final_del_db );
+        update_option( 'mpc_slots_same_day', $final_del_sd );
+        update_option( 'mpc_slots_pickup_day_before', $final_pk_db );
+        update_option( 'mpc_slots_pickup_same_day', $final_pk_sd );
 
         // Flush page & object caches so changes appear immediately on the frontend
         if ( function_exists( 'wp_cache_flush' ) ) {
@@ -279,21 +320,25 @@ function mpc_render_checkout_settings_admin_page() {
         }
         do_action( 'litespeed_purge_all' );
 
-        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Checkout Settings &amp; Delivery Time Slots saved successfully.</strong></p></div>';
+        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Checkout Settings &amp; 4-Way Delivery/Pickup Time Slots saved successfully.</strong></p></div>';
     }
 
     $current_login_mode = get_option( 'mpc_checkout_login_mode', 'l1' );
     $autofill_default   = get_option( 'mpc_checkout_autofill_default', '1' );
     $email_guard        = get_option( 'mpc_checkout_email_guard', '1' );
 
-    $slot_config      = mpc_get_configured_time_slots();
-    $master_presets   = mpc_get_master_preset_time_slots();
-    $saved_db_slots   = $slot_config['day_before'];
-    $saved_sd_slots   = $slot_config['same_day'];
-    $pickup_hide_am   = $slot_config['pickup_hide_early_am'];
+    $slot_config     = mpc_get_configured_time_slots();
+    $master_presets  = mpc_get_master_preset_time_slots();
 
-    $custom_db_only = array_diff( $saved_db_slots, $master_presets );
-    $custom_sd_only = array_diff( $saved_sd_slots, $master_presets );
+    $saved_del_db    = $slot_config['delivery_day_before'];
+    $saved_del_sd    = $slot_config['delivery_same_day'];
+    $saved_pk_db     = $slot_config['pickup_day_before'];
+    $saved_pk_sd     = $slot_config['pickup_same_day'];
+
+    $custom_del_db   = array_diff( $saved_del_db, $master_presets );
+    $custom_del_sd   = array_diff( $saved_del_sd, $master_presets );
+    $custom_pk_db    = array_diff( $saved_pk_db, $master_presets );
+    $custom_pk_sd    = array_diff( $saved_pk_sd, $master_presets );
 
     $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) ) === $table_subs );
     $pending_rows = array();
@@ -306,9 +351,56 @@ function mpc_render_checkout_settings_admin_page() {
              ORDER BY s.id DESC"
         );
     }
+
+    $slot_panels_meta = array(
+        array(
+            'group'       => 'db',
+            'title'       => '🚚 Home/Office Delivery — Day Before',
+            'sub'         => 'Shown when Method = Delivery & Receive by = Deliver Day Before',
+            'preset_name' => 'mpc_db_preset_slots[]',
+            'custom_name' => 'mpc_db_custom_slots',
+            'saved'       => $saved_del_db,
+            'custom_only' => $custom_del_db,
+            'quick_mode'  => 'evening',
+            'quick_label' => 'Evening (5PM–8PM)',
+        ),
+        array(
+            'group'       => 'sd',
+            'title'       => '🚚 Home/Office Delivery — Same Day',
+            'sub'         => 'Shown when Method = Delivery & Receive by = Deliver Same Day',
+            'preset_name' => 'mpc_sd_preset_slots[]',
+            'custom_name' => 'mpc_sd_custom_slots',
+            'saved'       => $saved_del_sd,
+            'custom_only' => $custom_del_sd,
+            'quick_mode'  => 'morning',
+            'quick_label' => 'Morning (5AM–12PM)',
+        ),
+        array(
+            'group'       => 'pk_db',
+            'title'       => '🏪 Store Pick-up — Day Before',
+            'sub'         => 'Shown when Method = Store Pick-up & Receive by = Deliver Day Before',
+            'preset_name' => 'mpc_pk_db_preset_slots[]',
+            'custom_name' => 'mpc_pk_db_custom_slots',
+            'saved'       => $saved_pk_db,
+            'custom_only' => $custom_pk_db,
+            'quick_mode'  => 'evening',
+            'quick_label' => 'Evening (5PM–8PM)',
+        ),
+        array(
+            'group'       => 'pk_sd',
+            'title'       => '🏪 Store Pick-up — Same Day',
+            'sub'         => 'Shown when Method = Store Pick-up & Receive by = Deliver Same Day',
+            'preset_name' => 'mpc_pk_sd_preset_slots[]',
+            'custom_name' => 'mpc_pk_sd_custom_slots',
+            'saved'       => $saved_pk_sd,
+            'custom_only' => $custom_pk_sd,
+            'quick_mode'  => 'pickup_morning',
+            'quick_label' => 'Morning (8AM–12PM)',
+        ),
+    );
     ?>
     <style>
-        .mpc-admin-wrap { max-width: 1120px; margin-top: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .mpc-admin-wrap { max-width: 1180px; margin-top: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         .mpc-admin-header { background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; padding: 22px 28px; border-radius: 12px; margin-bottom: 22px; box-shadow: 0 4px 14px rgba(27,94,32,0.14); }
         .mpc-admin-header h1 { color: #fff; margin: 0; font-size: 1.6rem; font-weight: 800; }
         .mpc-admin-header p { color: #DCECC9; margin: 5px 0 0 0; font-size: 0.93rem; }
@@ -325,18 +417,20 @@ function mpc_render_checkout_settings_admin_page() {
         .mpc-toggle-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 12px; cursor: pointer; }
         .mpc-toggle-row input[type="checkbox"] { margin-top: 3px; accent-color: #379237; transform: scale(1.2); }
 
-        /* Dual Time Slot Visual Builder */
+        /* 4-Way Time Slot Matrix (Full Visibility - Zero Scroll Trap) */
         .mpc-slots-builder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-bottom: 18px; }
-        @media (max-width: 900px) { .mpc-slots-builder-grid { grid-template-columns: 1fr; } }
-        .mpc-slot-panel { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 18px; }
-        .mpc-slot-panel-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
-        .mpc-slot-panel-head h3 { margin: 0; font-size: 1.05rem; color: #1B5E20; font-weight: 800; }
-        .mpc-slot-quick-btns { display: flex; gap: 6px; flex-wrap: wrap; }
-        .mpc-slot-qbtn { background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 3px 8px; font-size: 0.76rem; font-weight: 700; color: #334155; cursor: pointer; }
+        @media (max-width: 960px) { .mpc-slots-builder-grid { grid-template-columns: 1fr; } }
+        .mpc-slot-panel { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; justify-content: space-between; }
+        .mpc-slot-panel-head { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
+        .mpc-slot-panel-head h3 { margin: 0; font-size: 1.02rem; color: #1B5E20; font-weight: 800; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .mpc-slot-panel-sub { font-size: 0.78rem; color: #64748b; margin-top: 3px; display: block; font-weight: 500; }
+        .mpc-active-slot-badge { background: #dcfce7; color: #166534; border: 1px solid #86efac; padding: 2px 8px; border-radius: 999px; font-size: 0.74rem; font-weight: 800; }
+        .mpc-slot-quick-btns { display: flex; gap: 5px; flex-wrap: wrap; }
+        .mpc-slot-qbtn { background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 9px; font-size: 0.75rem; font-weight: 700; color: #334155; cursor: pointer; transition: 0.15s; }
         .mpc-slot-qbtn:hover { background: #EEF7E3; border-color: #379237; color: #1B5E20; }
-        .mpc-slot-pills-wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 14px; max-height: 290px; overflow-y: auto; padding-right: 4px; }
+        .mpc-slot-pills-wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 14px; }
         @media (max-width: 520px) { .mpc-slot-pills-wrap { grid-template-columns: 1fr; } }
-        .mpc-slot-check-pill { display: flex; align-items: center; gap: 7px; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 10px; font-size: 0.82rem; font-weight: 600; color: #334155; cursor: pointer; transition: 0.15s; }
+        .mpc-slot-check-pill { display: flex; align-items: center; gap: 7px; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 10px; font-size: 0.81rem; font-weight: 600; color: #334155; cursor: pointer; transition: 0.15s; }
         .mpc-slot-check-pill:hover { border-color: #68B946; }
         .mpc-slot-check-pill.is-checked { background: #EEF7E3; border-color: #379237; color: #1B5E20; font-weight: 700; }
         .mpc-slot-check-pill input[type="checkbox"] { margin: 0; accent-color: #379237; }
@@ -354,7 +448,7 @@ function mpc_render_checkout_settings_admin_page() {
 
         <div class="mpc-admin-header">
             <h1>Meal Plan Checkout Settings</h1>
-            <p>Manage Customer Sign-In Layout, Delivery &amp; Pickup Time Slots, Returning Customer Preferences, and Pending Subscription Records.</p>
+            <p>Manage Customer Sign-In Layout, 4-Way Delivery &amp; Store Pick-up Time Slots, Returning Customer Preferences, and Pending Subscription Records.</p>
         </div>
 
         <form method="POST" action="">
@@ -405,7 +499,7 @@ function mpc_render_checkout_settings_admin_page() {
                     <input type="checkbox" name="mpc_checkout_autofill_default" value="1" <?php checked( $autofill_default, '1' ); ?>>
                     <span>
                         <strong style="color:#0f172a; display:block; margin-bottom:2px;">Auto-Fill Saved Delivery Details on Sign-In</strong>
-                        <span style="font-size:0.85rem; color:#64748b;">Automatically populates the customer's saved name, phone, address, delivery timing, and allergies into Step 2 upon sign-in (customers can also click "Use a different email" to subscribe for someone else).</span>
+                        <span style="font-size:0.85rem; color:#64748b;">Automatically populates the customer's saved name, phone, address, delivery timing, and allergies into Step 2 upon sign-in (customers can also click "Change" inside the email box to subscribe with a different email).</span>
                     </span>
                 </label>
 
@@ -418,72 +512,51 @@ function mpc_render_checkout_settings_admin_page() {
                 </label>
             </div>
 
-            <!-- SECTION 3: DELIVERY & PICKUP TIME SLOTS -->
+            <!-- SECTION 3: 4-WAY DELIVERY & STORE PICK-UP TIME SLOT MATRIX -->
             <div class="mpc-admin-card">
-                <h2>3. Delivery &amp; Pickup Time Slots</h2>
-                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Assign the exact delivery/pickup time windows offered to customers when they select <strong>Deliver Day Before</strong> versus <strong>Deliver Same Day</strong> on the checkout page.</p>
+                <h2>3. Delivery &amp; Store Pick-up Time Slots (4-Way Matrix)</h2>
+                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Assign the exact time slots offered on the checkout page for each combination of <strong>Delivery Method</strong> (Home/Office Delivery vs. Store Pick-up) and <strong>Receive By</strong> (Deliver Day Before vs. Deliver Same Day). All slots are shown below without scrolling so you can review every active checkbox at a glance.</p>
 
                 <div class="mpc-slots-builder-grid">
-                    <!-- Column A: Deliver Day Before Slots -->
-                    <div class="mpc-slot-panel" data-slot-group="db">
-                        <div class="mpc-slot-panel-head">
-                            <h3>&#127769; Deliver Day Before &mdash; Time Slots</h3>
-                            <div class="mpc-slot-quick-btns">
-                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('db', 'evening')">Evening (5PM–8PM)</button>
-                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('db', 'all')">Select All</button>
-                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('db', 'none')">Clear</button>
+                    <?php foreach ( $slot_panels_meta as $panel ) :
+                        $grp_id = $panel['group'];
+                    ?>
+                        <div class="mpc-slot-panel" data-slot-group="<?php echo esc_attr( $grp_id ); ?>">
+                            <div>
+                                <div class="mpc-slot-panel-head">
+                                    <div>
+                                        <h3>
+                                            <span><?php echo esc_html( $panel['title'] ); ?></span>
+                                            <span class="mpc-active-slot-badge" id="mpc-slot-count-<?php echo esc_attr( $grp_id ); ?>"><?php echo count( $panel['saved'] ); ?> active</span>
+                                        </h3>
+                                        <span class="mpc-slot-panel-sub"><?php echo esc_html( $panel['sub'] ); ?></span>
+                                    </div>
+                                    <div class="mpc-slot-quick-btns">
+                                        <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('<?php echo esc_js( $grp_id ); ?>', '<?php echo esc_js( $panel['quick_mode'] ); ?>')"><?php echo esc_html( $panel['quick_label'] ); ?></button>
+                                        <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('<?php echo esc_js( $grp_id ); ?>', 'all')">Select All</button>
+                                        <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('<?php echo esc_js( $grp_id ); ?>', 'none')">Clear</button>
+                                    </div>
+                                </div>
+
+                                <div class="mpc-slot-pills-wrap">
+                                    <?php foreach ( $master_presets as $preset_slot ) :
+                                        $is_chk = in_array( $preset_slot, $panel['saved'], true );
+                                    ?>
+                                        <label class="mpc-slot-check-pill <?php echo $is_chk ? 'is-checked' : ''; ?>">
+                                            <input type="checkbox" name="<?php echo esc_attr( $panel['preset_name'] ); ?>" value="<?php echo esc_attr( $preset_slot ); ?>" <?php checked( $is_chk ); ?>>
+                                            <span><?php echo esc_html( $preset_slot ); ?></span>
+                                        </label>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style="font-size:0.79rem; font-weight:700; color:#334155; display:block; margin-bottom:4px;">Additional Custom Slots (One per line):</label>
+                                <textarea name="<?php echo esc_attr( $panel['custom_name'] ); ?>" rows="2" style="width:100%; border:1px solid #cbd5e1; border-radius:6px; padding:7px 10px; font-size:0.84rem;" placeholder="e.g. 6:00 PM to 9:00 PM"><?php echo esc_textarea( implode( "\n", $panel['custom_only'] ) ); ?></textarea>
                             </div>
                         </div>
-
-                        <div class="mpc-slot-pills-wrap">
-                            <?php foreach ( $master_presets as $preset_slot ) :
-                                $is_chk = in_array( $preset_slot, $saved_db_slots, true );
-                            ?>
-                                <label class="mpc-slot-check-pill <?php echo $is_chk ? 'is-checked' : ''; ?>">
-                                    <input type="checkbox" name="mpc_db_preset_slots[]" value="<?php echo esc_attr( $preset_slot ); ?>" <?php checked( $is_chk ); ?>>
-                                    <span><?php echo esc_html( $preset_slot ); ?></span>
-                                </label>
-                            <?php endforeach; ?>
-                        </div>
-
-                        <label style="font-size:0.8rem; font-weight:700; color:#334155; display:block; margin-bottom:4px;">Additional Custom "Deliver Day Before" Slots (One per line):</label>
-                        <textarea name="mpc_db_custom_slots" rows="2" style="width:100%; border:1px solid #cbd5e1; border-radius:6px; padding:7px 10px; font-size:0.84rem;" placeholder="e.g. 6:00 PM to 9:00 PM"><?php echo esc_textarea( implode( "\n", $custom_db_only ) ); ?></textarea>
-                    </div>
-
-                    <!-- Column B: Deliver Same Day Slots -->
-                    <div class="mpc-slot-panel" data-slot-group="sd">
-                        <div class="mpc-slot-panel-head">
-                            <h3>&#9728;&#65039; Deliver Same Day &mdash; Time Slots</h3>
-                            <div class="mpc-slot-quick-btns">
-                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('sd', 'morning')">Morning (5AM–12PM)</button>
-                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('sd', 'all')">Select All</button>
-                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('sd', 'none')">Clear</button>
-                            </div>
-                        </div>
-
-                        <div class="mpc-slot-pills-wrap">
-                            <?php foreach ( $master_presets as $preset_slot ) :
-                                $is_chk = in_array( $preset_slot, $saved_sd_slots, true );
-                            ?>
-                                <label class="mpc-slot-check-pill <?php echo $is_chk ? 'is-checked' : ''; ?>">
-                                    <input type="checkbox" name="mpc_sd_preset_slots[]" value="<?php echo esc_attr( $preset_slot ); ?>" <?php checked( $is_chk ); ?>>
-                                    <span><?php echo esc_html( $preset_slot ); ?></span>
-                                </label>
-                            <?php endforeach; ?>
-                        </div>
-
-                        <label style="font-size:0.8rem; font-weight:700; color:#334155; display:block; margin-bottom:4px;">Additional Custom "Deliver Same Day" Slots (One per line):</label>
-                        <textarea name="mpc_sd_custom_slots" rows="2" style="width:100%; border:1px solid #cbd5e1; border-radius:6px; padding:7px 10px; font-size:0.84rem;" placeholder="e.g. 11:00 AM to 1:00 PM"><?php echo esc_textarea( implode( "\n", $custom_sd_only ) ); ?></textarea>
-                    </div>
+                    <?php endforeach; ?>
                 </div>
-
-                <label class="mpc-toggle-row">
-                    <input type="checkbox" name="mpc_pickup_hide_early_am" value="1" <?php checked( $pickup_hide_am ); ?>>
-                    <span>
-                        <strong style="color:#0f172a; display:block; margin-bottom:2px;">Hide Early Morning Slots (5:00 AM – 8:00 AM) When "Store Pick-up" Is Selected</strong>
-                        <span style="font-size:0.85rem; color:#64748b;">Automatically hides slots starting at 5:00 AM, 6:00 AM, or 7:00 AM when a customer chooses Store Pick-up instead of Home/Office Delivery.</span>
-                    </span>
-                </label>
 
                 <div style="margin-top: 20px;">
                     <button type="submit" name="mpc_save_checkout_settings" class="button button-primary" style="background:#379237; border-color:#1B5E20; font-weight:800; padding:8px 26px; height:auto; font-size:0.95rem; border-radius:8px;">
@@ -493,7 +566,7 @@ function mpc_render_checkout_settings_admin_page() {
             </div>
         </form>
 
-        <!-- SECTION 4: UNPAID & PENDING SUBSCRIPTION RECORDS (INSPECTION TABLE & SELECTIVE DELETE) -->
+        <!-- SECTION 4: UNPAID & PENDING SUBSCRIPTION RECORDS -->
         <div class="mpc-admin-card" style="border-left: 5px solid #379237;">
             <h2>4. Unpaid &amp; Pending Subscription Records</h2>
             <p style="color:#334155; line-height:1.55; margin-top:0;">
@@ -615,9 +688,20 @@ function mpc_render_checkout_settings_admin_page() {
         });
     });
 
+    function mpcUpdatePanelSlotCount(panel) {
+        if (!panel) return;
+        const grp = panel.getAttribute('data-slot-group');
+        const checkedCount = panel.querySelectorAll('.mpc-slot-check-pill input[type="checkbox"]:checked').length;
+        const badge = document.getElementById('mpc-slot-count-' + grp);
+        if (badge) {
+            badge.textContent = checkedCount + ' active';
+        }
+    }
+
     document.querySelectorAll('.mpc-slot-check-pill input[type="checkbox"]').forEach(function(cb) {
         cb.addEventListener('change', function() {
             this.closest('.mpc-slot-check-pill').classList.toggle('is-checked', this.checked);
+            mpcUpdatePanelSlotCount(this.closest('.mpc-slot-panel'));
         });
     });
 
@@ -635,10 +719,13 @@ function mpc_render_checkout_settings_admin_page() {
                 shouldCheck = /^(5|6|7):00 PM/.test(val);
             } else if (mode === 'morning') {
                 shouldCheck = /^(5|6|7|8|9|10|11):00 AM/.test(val);
+            } else if (mode === 'pickup_morning') {
+                shouldCheck = /^(8|9|10|11):00 AM/.test(val);
             }
             cb.checked = shouldCheck;
             cb.closest('.mpc-slot-check-pill').classList.toggle('is-checked', shouldCheck);
         });
+        mpcUpdatePanelSlotCount(panel);
     }
 
     const selectAllPending = document.getElementById('mpc-select-all-pending');
@@ -661,18 +748,21 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout' ) ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.4.0';
+        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.5.0';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
 
 // ==========================================
-// 2. AJAX: FRESH NONCE (Cache-Safe)
+// 2. AJAX: FRESH NONCE & LIVE SLOT MATRIX SYNC (Cache-Safe)
 // ==========================================
 add_action( 'wp_ajax_nopriv_mpc_get_nonce', 'mpc_get_fresh_nonce' );
 add_action( 'wp_ajax_mpc_get_nonce',        'mpc_get_fresh_nonce' );
 function mpc_get_fresh_nonce() {
-    wp_send_json_success( array( 'nonce' => wp_create_nonce( 'mpc_checkout_nonce' ) ) );
+    wp_send_json_success( array(
+        'nonce'       => wp_create_nonce( 'mpc_checkout_nonce' ),
+        'slot_config' => mpc_get_configured_time_slots(),
+    ) );
 }
 
 // ==========================================
@@ -1083,7 +1173,6 @@ function mpc_process_order() {
         $existing_email_uid = email_exists( $email );
 
         if ( $existing_email_uid ) {
-            // If an Admin/FOH/Menu Manager is placing an order for an existing customer's email, route to that customer without requiring their password
             if ( $is_staff_actor ) {
                 $user_id = intval( $existing_email_uid );
             } else {
@@ -1099,7 +1188,6 @@ function mpc_process_order() {
             }
             $user_id = intval( $new_uid );
 
-            // Switch browser session to the new customer account ONLY if the current user is not a staff member
             if ( ! $is_staff_actor ) {
                 wp_clear_auth_cookie();
                 wp_set_current_user( $user_id );
@@ -1436,6 +1524,61 @@ function mpc_render_checkout_wizard() {
         <script>var mpcSavedDetails = <?php echo wp_json_encode( $saved_user_details ); ?>;</script>
     <?php endif; ?>
 
+    <style>
+        /* Theme-Proof Letter-Spacing Reset & Embedded Email Pill (Option EM-UI-1) */
+        .mpc-checkout-container button,
+        .mpc-checkout-container a,
+        .mpc-checkout-container input,
+        .mpc-checkout-container select {
+            letter-spacing: normal !important;
+            text-transform: none !important;
+        }
+        .mpc-email-input-wrap {
+            position: relative !important;
+            display: flex !important;
+            align-items: center !important;
+            width: 100% !important;
+        }
+        .mpc-email-input-wrap input#mpc_email.is-locked-email {
+            padding-right: 96px !important;
+            background: #f1f5f9 !important;
+            color: #334155 !important;
+            cursor: not-allowed !important;
+            text-overflow: ellipsis !important;
+        }
+        .mpc-embedded-email-pill {
+            position: absolute !important;
+            right: 7px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            background: #EEF7E3 !important;
+            color: #1B5E20 !important;
+            border: 1px solid #68B946 !important;
+            border-radius: 6px !important;
+            padding: 4px 10px !important;
+            font-size: 0.75rem !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            letter-spacing: normal !important;
+            white-space: nowrap !important;
+            cursor: pointer !important;
+            z-index: 5 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            height: auto !important;
+            width: auto !important;
+            margin: 0 !important;
+            box-shadow: 0 1px 2px rgba(27, 94, 32, 0.08) !important;
+            transition: all 0.15s ease !important;
+        }
+        .mpc-embedded-email-pill:hover {
+            background: #379237 !important;
+            color: #ffffff !important;
+            border-color: #1B5E20 !important;
+        }
+    </style>
+
     <div class="mpc-checkout-container" data-login-mode="<?php echo esc_attr( $login_ui_mode ); ?>">
 
         <div class="mpc-wizard-area">
@@ -1554,7 +1697,6 @@ function mpc_render_checkout_wizard() {
                                 </div>
                             </div>
                         <?php else : ?>
-                            <!-- Distinct Two-Tab Switcher Even When Logged In -->
                             <div class="mpc-l3-mode-tabs">
                                 <button type="button" class="mpc-l3-tab-btn active" data-l3-auth-mode="self">
                                     <span>&#128100; Continue as <?php echo esc_html( $saved_user_details['first_name'] ); ?></span>
@@ -1684,18 +1826,18 @@ function mpc_render_checkout_wizard() {
 
                 <div class="mpc-form-row">
                     <div class="mpc-form-col mpc-form-group">
-                        <div class="mpc-label-with-action">
-                            <label style="margin:0;">Email Address *</label>
+                        <label>Email Address *</label>
+                        <div class="mpc-email-input-wrap">
+                            <input type="email" class="mpc-form-control <?php echo is_user_logged_in() ? 'is-locked-email' : ''; ?>" id="mpc_email" placeholder="name@example.com" required <?php if ( is_user_logged_in() ) echo 'readonly'; ?>>
                             <?php if ( is_user_logged_in() ) : ?>
-                                <button type="button" id="mpc-inline-email-toggle" class="mpc-diff-email-trigger mpc-inline-email-btn">&#9998; Use a different email</button>
+                                <button type="button" id="mpc-inline-email-toggle" class="mpc-diff-email-trigger mpc-embedded-email-pill" title="Use a different email address">&#9998; Change</button>
                             <?php endif; ?>
                         </div>
-                        <input type="email" class="mpc-form-control" id="mpc_email" placeholder="name@example.com" required <?php if ( is_user_logged_in() ) echo 'readonly style="background: #f1f5f9; cursor: not-allowed;"'; ?>>
                         <div id="mpc-email-exists-hint" class="mpc-email-exists-hint">
                             &#128100; An account with this email already exists. <a href="#signin" id="mpc-email-hint-trigger" style="color:#1B5E20; font-weight:800; text-decoration:underline;">Click here to sign in</a> and waive your bag deposit.
                         </div>
                         <div id="mpc-different-email-notice" class="mpc-different-email-notice" style="display:none;">
-                            &#10024; Creating a plan for a different email address. <a href="#restore-self" id="mpc-restore-account-email" style="color:#1B5E20; font-weight:800; text-decoration:underline;">Use my account (<?php echo is_user_logged_in() ? esc_html( $saved_user_details['email'] ) : ''; ?>)</a>
+                            &#10024; Ordering with a new email address &bull; <a href="#restore-self" id="mpc-restore-account-email" style="color:#1B5E20; font-weight:800; text-decoration:underline;">&#8617; Use my account email</a>
                         </div>
                     </div>
                     <div class="mpc-form-col mpc-form-group">
@@ -1810,7 +1952,6 @@ function mpc_render_checkout_wizard() {
             <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
             <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
 
-            <!-- Persistent Coupon Code Box inside Summary Card (Visible Across Steps 1, 2 & 3) -->
             <div id="mpc-coupon-section" class="mpc-summary-coupon-box" style="display: none;">
                 <label class="mpc-summary-coupon-label">&#127903;&#65039; Have a Discount Code?</label>
                 <div class="mpc-summary-coupon-row">
@@ -1825,7 +1966,6 @@ function mpc_render_checkout_wizard() {
                 <strong>Receive By:</strong> <span id="sum-timing"></span>
             </div>
 
-            <!-- Mobile / Summary Direct Next Step Button on Step 1 -->
             <button type="button" id="btn-summary-next-1" class="mpc-btn mpc-btn-next mpc-summary-next-btn" onclick="mpcChangeStep(1)" style="display: none;">
                 Next: Delivery Details &rarr;
             </button>
@@ -1847,8 +1987,8 @@ function mpc_render_checkout_wizard() {
         let autoFillOnLogin       = <?php echo $autofill_default ? 'true' : 'false'; ?>;
         let emailGuardEnabled     = <?php echo $email_guard_on ? 'true' : 'false'; ?>;
 
-        // Configured Time Slots from WP Admin > Meal Portal > Checkout Settings
-        const mpcSlotConfig = <?php echo wp_json_encode( $slot_config ); ?>;
+        // 4-Way Configured Time Slot Matrix (Synced via Live AJAX on Page Load)
+        let mpcSlotConfig = <?php echo wp_json_encode( $slot_config ); ?>;
         
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
@@ -1884,6 +2024,17 @@ function mpc_render_checkout_wizard() {
             }, 3800);
         }
 
+        // Normalize saved timing strings ("Day Before" -> "Deliver Day Before", "Same Day" -> "Deliver Same Day")
+        function mpcNormalizeTimingValue(rawVal) {
+            if (!rawVal) return 'Deliver Day Before';
+            const str = String(rawVal).toLowerCase();
+            if (str.indexOf('same day') !== -1) {
+                return 'Deliver Same Day';
+            }
+            return 'Deliver Day Before';
+        }
+
+        // Uncached AJAX Sync for Fresh Nonce & Live 4-Way Time Slot Matrix
         let _mpcFreshNonce = null;
         fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', {
             method: 'POST',
@@ -1891,8 +2042,15 @@ function mpc_render_checkout_wizard() {
         })
         .then(res => res.json())
         .then(response => {
-            if (response.success && response.data.nonce) {
-                _mpcFreshNonce = response.data.nonce;
+            if (response.success) {
+                if (response.data.nonce) {
+                    _mpcFreshNonce = response.data.nonce;
+                }
+                if (response.data.slot_config) {
+                    mpcSlotConfig = response.data.slot_config;
+                    mpcAdjustTimingOptions();
+                    updateLogisticsSummary();
+                }
             }
         });
 
@@ -2062,26 +2220,38 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // ---- DYNAMIC TIME SLOT BUILDER (SYNCED WITH CHECKOUT SETTINGS) ----
+        // ---- 4-WAY DYNAMIC TIME SLOT BUILDER (DELIVERY / PICKUP x DAY BEFORE / SAME DAY) ----
         function mpcAdjustTimingOptions() {
-            const method         = document.getElementById('mpc_delivery_method').value;
-            const timing         = document.getElementById('mpc_delivery_timing').value;
+            const methodEl       = document.getElementById('mpc_delivery_method');
+            const timingEl       = document.getElementById('mpc_delivery_timing');
             const timeSlotSelect = document.getElementById('mpc_time_slot');
-            if (!timeSlotSelect) return;
+            if (!methodEl || !timingEl || !timeSlotSelect) return;
+
+            const method      = methodEl.value || 'Delivery';
+            const normalizedT = mpcNormalizeTimingValue(timingEl.value);
+            if (timingEl.value !== normalizedT) {
+                timingEl.value = normalizedT;
+            }
 
             const previousVal = timeSlotSelect.value;
-            const isSameDay   = (timing && timing.toLowerCase().indexOf('same day') !== -1);
-            const rawSlots    = isSameDay ? (mpcSlotConfig.same_day || []) : (mpcSlotConfig.day_before || []);
-            const hideEarlyAm = (method === 'Pickup' && mpcSlotConfig.pickup_hide_early_am);
+            const isSameDay   = (normalizedT.toLowerCase().indexOf('same day') !== -1);
+            const isPickup    = (method === 'Pickup');
+
+            let activeSlots = [];
+            if (isPickup) {
+                activeSlots = isSameDay
+                    ? (mpcSlotConfig.pickup_same_day || mpcSlotConfig.same_day || [])
+                    : (mpcSlotConfig.pickup_day_before || mpcSlotConfig.day_before || []);
+            } else {
+                activeSlots = isSameDay
+                    ? (mpcSlotConfig.delivery_same_day || mpcSlotConfig.same_day || [])
+                    : (mpcSlotConfig.delivery_day_before || mpcSlotConfig.day_before || []);
+            }
 
             timeSlotSelect.innerHTML = '';
             let matchFound = false;
 
-            rawSlots.forEach(function(slotStr) {
-                const isEarlySlot = /^(5|6|7):00 AM/i.test(slotStr);
-                if (hideEarlyAm && isEarlySlot) {
-                    return;
-                }
+            activeSlots.forEach(function(slotStr) {
                 const opt = document.createElement('option');
                 opt.value = slotStr;
                 opt.textContent = slotStr;
@@ -2110,8 +2280,7 @@ function mpc_render_checkout_wizard() {
                 let ef = document.getElementById('mpc_email');
                 ef.value = data.email;
                 ef.readOnly = true;
-                ef.style.background = '#f1f5f9';
-                ef.style.cursor = 'not-allowed';
+                ef.classList.add('is-locked-email');
                 let hintEl = document.getElementById('mpc-email-exists-hint');
                 if (hintEl) hintEl.style.display = 'none';
             }
@@ -2122,7 +2291,7 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc_delivery_method').value = data.delivery_method;
             }
             if (data.delivery_timing) {
-                document.getElementById('mpc_delivery_timing').value = data.delivery_timing;
+                document.getElementById('mpc_delivery_timing').value = mpcNormalizeTimingValue(data.delivery_timing);
             }
             mpcAdjustTimingOptions();
             if (data.time_slot) {
@@ -2143,12 +2312,13 @@ function mpc_render_checkout_wizard() {
             updateLogisticsSummary();
         }
 
-        // ---- INLINE "USE A DIFFERENT EMAIL" TOGGLE (OPTION EM-1) ----
+        // ---- EMBEDDED "CHANGE EMAIL" PILL & MODE SWITCHER (OPTION EM-UI-1) ----
         function enableDifferentEmailMode() {
             usingDifferentEmail = true;
             let ef = document.getElementById('mpc_email');
             if (ef) {
                 ef.readOnly = false;
+                ef.classList.remove('is-locked-email');
                 ef.style.background = '#ffffff';
                 ef.style.cursor = 'text';
                 ef.value = '';
@@ -2161,7 +2331,7 @@ function mpc_render_checkout_wizard() {
             if (diffNotice) diffNotice.style.display = 'block';
 
             let inlineBtn = document.getElementById('mpc-inline-email-toggle');
-            if (inlineBtn) inlineBtn.style.display = 'none';
+            if (inlineBtn) inlineBtn.style.setProperty('display', 'none', 'important');
 
             document.querySelectorAll('.mpc-use-saved-details-cb').forEach(cb => { cb.checked = false; });
 
@@ -2188,7 +2358,7 @@ function mpc_render_checkout_wizard() {
             if (diffNotice) diffNotice.style.display = 'none';
 
             let inlineBtn = document.getElementById('mpc-inline-email-toggle');
-            if (inlineBtn) inlineBtn.style.display = 'inline-flex';
+            if (inlineBtn) inlineBtn.style.setProperty('display', 'inline-flex', 'important');
 
             document.querySelectorAll('.mpc-l3-tab-btn[data-l3-auth-mode]').forEach(b => {
                 b.classList.toggle('active', b.getAttribute('data-l3-auth-mode') === 'self');
@@ -2244,12 +2414,28 @@ function mpc_render_checkout_wizard() {
             let hintEl = document.getElementById('mpc-email-exists-hint');
             if (hintEl) hintEl.style.display = 'none';
 
+            let diffNotice = document.getElementById('mpc-different-email-notice');
+            if (diffNotice) diffNotice.style.display = 'none';
+
             if (userData.email) {
                 let ef = document.getElementById('mpc_email');
                 ef.value = userData.email;
                 ef.readOnly = true;
-                ef.style.background = '#f1f5f9';
-                ef.style.cursor = 'not-allowed';
+                ef.classList.add('is-locked-email');
+
+                // Ensure the embedded Change pill exists inside .mpc-email-input-wrap
+                let wrapEl = ef.closest('.mpc-email-input-wrap');
+                if (wrapEl && !document.getElementById('mpc-inline-email-toggle')) {
+                    let pillBtn = document.createElement('button');
+                    pillBtn.type = 'button';
+                    pillBtn.id = 'mpc-inline-email-toggle';
+                    pillBtn.className = 'mpc-diff-email-trigger mpc-embedded-email-pill';
+                    pillBtn.title = 'Use a different email address';
+                    pillBtn.innerHTML = '&#9998; Change';
+                    wrapEl.appendChild(pillBtn);
+                } else if (document.getElementById('mpc-inline-email-toggle')) {
+                    document.getElementById('mpc-inline-email-toggle').style.setProperty('display', 'inline-flex', 'important');
+                }
             }
 
             let depositBadgeHtml = (!requiresDeposit)
@@ -2295,7 +2481,7 @@ function mpc_render_checkout_wizard() {
 
             document.querySelectorAll('.mpc-use-saved-details-cb').forEach(chk => {
                 chk.addEventListener('change', function() {
-                    if (this.checked) populateFields(userData);
+                    if (this.checked) restoreLoggedInAccountEmailMode();
                 });
             });
 
@@ -2617,7 +2803,7 @@ function mpc_render_checkout_wizard() {
                         document.getElementById('mpc_delivery_method').value = state.deliveryMethod;
                     }
                     if (state.deliveryTiming) {
-                        document.getElementById('mpc_delivery_timing').value = state.deliveryTiming;
+                        document.getElementById('mpc_delivery_timing').value = mpcNormalizeTimingValue(state.deliveryTiming);
                     }
                     mpcAdjustTimingOptions();
                     if (state.timeSlot) {
@@ -2670,7 +2856,6 @@ function mpc_render_checkout_wizard() {
             mpcRenderSummary(); 
             updateLogisticsSummary();
             
-            // Smart Scroll: On Mobile/Tablet where Summary Card is stacked at top, scroll smoothly to Summary Card (which now has its own "Next: Delivery Details" CTA!)
             setTimeout(function() {
                 if (window.innerWidth <= 900) {
                     let sumCard = document.getElementById('mpc-summary-card');
@@ -2759,7 +2944,6 @@ function mpc_render_checkout_wizard() {
             if (currentStep > totalSteps) currentStep = totalSteps;
             document.getElementById('mpc-step-' + currentStep).classList.add('active');
 
-            // Show/hide the Summary Card's "Next: Delivery Details" button depending on whether we are on Step 1
             let sumNextBtn = document.getElementById('btn-summary-next-1');
             if (sumNextBtn) {
                 sumNextBtn.style.display = (currentStep === 1 && checkoutData.productId) ? 'block' : 'none';
@@ -2848,7 +3032,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         return;
     }
 
-    // Strictly verify that the order is Processing or Completed
     if ( ! $order->has_status( array( 'processing', 'completed' ) ) ) {
         return;
     }
@@ -2858,7 +3041,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
     $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
     $customer_id = intval( $order->get_customer_id() );
 
-    // 1. Check if a subscription record already exists for this WooCommerce Order ID (Idempotency Guard)
     $existing_sub = $wpdb->get_row( $wpdb->prepare(
         "SELECT * FROM {$table_subs} WHERE wc_order_id = %d ORDER BY id DESC LIMIT 1",
         $order_id
@@ -2881,7 +3063,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         }
         $provisioned_sub_id = intval( $existing_sub->id );
     } else {
-        // 2. Provision Brand-New Active Subscription from Order Meta Blueprint
         $plan_name   = $order->get_meta( '_cmp_plan_name' );
         $total_days  = intval( $order->get_meta( '_cmp_total_days' ) );
         $categories  = $order->get_meta( '_cmp_allowed_categories' );
@@ -2995,7 +3176,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         }
     }
 
-    // 3. Finalize Deposit Wallet, VIP Magic Link Consumption & Coupon Usage Count (Once per Order)
     $meta_needs_save = false;
 
     if ( $customer_id > 0 ) {
@@ -3014,7 +3194,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         }
     }
 
-    // Consume single-use VIP token now that payment succeeded
     $vip_token = $order->get_meta( '_mpc_vip_token' );
     if ( ! empty( $vip_token ) ) {
         $active_links = get_option( 'cmp_active_magic_links', array() );
@@ -3026,7 +3205,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         $meta_needs_save = true;
     }
 
-    // Increment WooCommerce coupon usage count once upon confirmed payment
     $coupon_used = $order->get_meta( '_mpc_coupon_used' );
     if ( ! empty( $coupon_used ) && ! $order->get_meta( '_mpc_coupon_usage_counted' ) ) {
         $wc_coupon_obj = new WC_Coupon( $coupon_used );
