@@ -1,5 +1,5 @@
 /* ======================================================================
-MEAL PLAN CHECKOUT - CORE STYLES, DESKTOP & MOBILE OPTIMIZED UI (v4.4.0)
+MEAL PLAN CHECKOUT - CORE STYLES, DESKTOP, TABLET & MOBILE UI (v4.5.0)
 ====================================================================== */
 
 :root {
@@ -16,7 +16,7 @@ MEAL PLAN CHECKOUT - CORE STYLES, DESKTOP & MOBILE OPTIMIZED UI (v4.4.0)
 --mpc-radius: 12px;
 }
 
-/* Base Container */
+/* Base Container & Theme-Proof Reset */
 .mpc-checkout-container {
 max-width: 1150px;
 margin: 30px auto;
@@ -27,11 +27,24 @@ gap: 30px;
 padding: 0;
 box-sizing: border-box;
 color: var(--mpc-text-main);
+letter-spacing: normal;
 }
 .mpc-checkout-container *,
 .mpc-checkout-container *::before,
 .mpc-checkout-container *::after {
 box-sizing: border-box;
+}
+
+/* Prevent WordPress Theme from Injecting Wide Letter-Spacing on Buttons & Inputs */
+.mpc-checkout-container button,
+.mpc-checkout-container a,
+.mpc-checkout-container label,
+.mpc-checkout-container input,
+.mpc-checkout-container select,
+.mpc-checkout-container textarea {
+letter-spacing: normal !important;
+text-transform: none !important;
+font-family: inherit;
 }
 
 /* Prevent WordPress Twemoji / SVG icons from stretching */
@@ -113,29 +126,31 @@ color: #475569;
 font-size: 0.86rem;
 }
 .mpc-account-toggle-btn {
-background: var(--mpc-primary);
+background: var(--mpc-primary) !important;
 color: #ffffff !important;
-border: none;
-border-radius: 8px;
-padding: 7px 14px;
-font-size: 0.84rem;
-font-weight: 800;
-cursor: pointer;
-transition: all 0.2s ease;
+border: none !important;
+border-radius: 8px !important;
+padding: 7px 14px !important;
+font-size: 0.84rem !important;
+font-weight: 800 !important;
+cursor: pointer !important;
+transition: all 0.2s ease !important;
 text-decoration: none !important;
-display: inline-flex;
-align-items: center;
-gap: 6px;
-white-space: nowrap;
-height: auto;
-flex-shrink: 0;
+display: inline-flex !important;
+align-items: center !important;
+gap: 6px !important;
+white-space: nowrap !important;
+height: auto !important;
+width: auto !important;
+margin: 0 !important;
+flex-shrink: 0 !important;
 }
 .mpc-account-toggle-btn:hover {
-background: var(--mpc-primary-dark);
+background: var(--mpc-primary-dark) !important;
 transform: translateY(-1px);
 }
 
-/* Logged-In 2-Row Compact Layout (Fixes Mobile Wrapping) */
+/* Logged-In 2-Row Compact Layout */
 .mpc-logged-bar-row-1 {
 display: flex;
 align-items: center;
@@ -193,21 +208,25 @@ cursor: pointer !important;
 flex-shrink: 0 !important;
 }
 .mpc-switch-email-link {
-background: rgba(255, 255, 255, 0.85);
-color: #334155;
-border: 1px solid #cbd5e1;
-border-radius: 6px;
-padding: 3px 9px;
-font-size: 0.76rem;
-font-weight: 700;
-cursor: pointer;
-transition: all 0.15s ease;
-white-space: nowrap;
+background: rgba(255, 255, 255, 0.9) !important;
+color: #334155 !important;
+border: 1px solid #cbd5e1 !important;
+border-radius: 6px !important;
+padding: 4px 10px !important;
+font-size: 0.76rem !important;
+font-weight: 700 !important;
+line-height: 1.2 !important;
+cursor: pointer !important;
+transition: all 0.15s ease !important;
+white-space: nowrap !important;
+width: auto !important;
+height: auto !important;
+margin: 0 !important;
 }
 .mpc-switch-email-link:hover {
-background: #ffffff;
-color: var(--mpc-primary-dark);
-border-color: var(--mpc-primary);
+background: #ffffff !important;
+color: var(--mpc-primary-dark) !important;
+border-color: var(--mpc-primary) !important;
 }
 
 /* Inline Auth Drawer & Forgot Password */
@@ -237,6 +256,8 @@ padding: 0 20px !important;
 font-size: 0.9rem !important;
 font-weight: 800 !important;
 white-space: nowrap !important;
+width: auto !important;
+margin: 0 !important;
 }
 .mpc-auth-reset-btn {
 background: #334155 !important;
@@ -246,6 +267,8 @@ padding: 0 18px !important;
 font-size: 0.88rem !important;
 font-weight: 800 !important;
 white-space: nowrap !important;
+width: auto !important;
+margin: 0 !important;
 }
 .mpc-auth-links-row {
 display: flex;
@@ -283,27 +306,29 @@ border: 1px solid #cbd5e1;
 margin-bottom: 18px;
 }
 .mpc-l3-tab-btn {
-background: transparent;
-color: #475569;
-border: 1px solid transparent;
-border-radius: 9px;
-padding: 10px 12px;
-font-size: 0.9rem;
-font-weight: 800;
-cursor: pointer;
-transition: all 0.2s ease;
-display: flex;
-align-items: center;
-justify-content: center;
-gap: 6px;
-text-align: center;
-line-height: 1.25;
+background: transparent !important;
+color: #475569 !important;
+border: 1px solid transparent !important;
+border-radius: 9px !important;
+padding: 10px 12px !important;
+font-size: 0.9rem !important;
+font-weight: 800 !important;
+cursor: pointer !important;
+transition: all 0.2s ease !important;
+display: flex !important;
+align-items: center !important;
+justify-content: center !important;
+gap: 6px !important;
+text-align: center !important;
+line-height: 1.25 !important;
+height: auto !important;
+margin: 0 !important;
 }
 .mpc-l3-tab-btn.active {
-background: #ffffff;
-color: var(--mpc-primary-dark);
-box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
-border-color: var(--mpc-accent-border);
+background: #ffffff !important;
+color: var(--mpc-primary-dark) !important;
+box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08) !important;
+border-color: var(--mpc-accent-border) !important;
 }
 .mpc-l3-returning-panel {
 display: none;
@@ -449,7 +474,7 @@ font-weight: 800;
 }
 
 /* ======================================================================
-4. COMPACT STEP 2 FORM & LOGISTICS CARD STYLING
+4. COMPACT STEP 2 FORM, EMBEDDED EMAIL PILL (OPTION EM-UI-1) & LOGISTICS
 ====================================================================== */
 .mpc-step-header-flex {
 display: flex;
@@ -481,6 +506,7 @@ gap: 14px;
 width: 100%;
 flex-wrap: wrap;
 margin-bottom: 12px;
+align-items: flex-start;
 }
 .mpc-form-col {
 flex: 1;
@@ -492,34 +518,62 @@ font-size: 0.84rem;
 font-weight: 700;
 color: #334155;
 margin-bottom: 5px;
+line-height: 1.3;
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
 }
-.mpc-label-with-action {
-display: flex;
-align-items: center;
-justify-content: space-between;
-gap: 8px;
-margin-bottom: 5px;
+
+/* Option EM-UI-1: Embedded Action Pill Inside the Right Edge of #mpc_email */
+.mpc-email-input-wrap {
+position: relative !important;
+display: flex !important;
+align-items: center !important;
+width: 100% !important;
 }
-.mpc-inline-email-btn {
-background: none;
-border: none;
-color: var(--mpc-primary);
-font-size: 0.78rem;
-font-weight: 800;
-cursor: pointer;
-padding: 0;
-text-decoration: underline;
-display: inline-flex;
-align-items: center;
-gap: 3px;
+.mpc-email-input-wrap input#mpc_email.is-locked-email {
+padding-right: 98px !important;
+background: #f1f5f9 !important;
+color: #334155 !important;
+cursor: not-allowed !important;
+text-overflow: ellipsis !important;
 }
-.mpc-inline-email-btn:hover {
-color: var(--mpc-primary-dark);
+.mpc-embedded-email-pill {
+position: absolute !important;
+right: 7px !important;
+top: 50% !important;
+transform: translateY(-50%) !important;
+background: var(--mpc-accent-light) !important;
+color: var(--mpc-primary-dark) !important;
+border: 1px solid #68B946 !important;
+border-radius: 6px !important;
+padding: 4px 10px !important;
+font-size: 0.75rem !important;
+font-weight: 800 !important;
+line-height: 1.2 !important;
+letter-spacing: normal !important;
+white-space: nowrap !important;
+cursor: pointer !important;
+z-index: 5 !important;
+display: inline-flex !important;
+align-items: center !important;
+gap: 4px !important;
+height: auto !important;
+width: auto !important;
+margin: 0 !important;
+box-shadow: 0 1px 2px rgba(27, 94, 32, 0.08) !important;
+transition: all 0.15s ease !important;
+}
+.mpc-embedded-email-pill:hover {
+background: var(--mpc-primary) !important;
+color: #ffffff !important;
+border-color: var(--mpc-primary-dark) !important;
 }
 
 .mpc-form-control {
 width: 100%;
 padding: 11px 13px;
+height: 44px;
 border: 1.5px solid #cbd5e1;
 border-radius: 8px;
 box-sizing: border-box;
@@ -527,6 +581,9 @@ font-size: 0.95rem;
 color: var(--mpc-text-main);
 background: #ffffff;
 transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+textarea.mpc-form-control {
+height: auto;
 }
 .mpc-form-control:focus {
 border-color: var(--mpc-primary);
@@ -599,7 +656,7 @@ flex: 1;
 height: 40px;
 padding: 6px 11px;
 font-size: 0.88rem;
-letter-spacing: 0.5px;
+letter-spacing: 0.5px !important;
 font-weight: 700;
 }
 .mpc-summary-apply-btn {
@@ -754,8 +811,8 @@ display: none;
     gap: 5px !important;
 }
 .mpc-switch-email-link {
-    font-size: 0.73rem;
-    padding: 3px 7px;
+    font-size: 0.73rem !important;
+    padding: 3px 7px !important;
 }
 
 .mpc-inline-auth-grid,
@@ -777,8 +834,8 @@ display: none;
     margin-bottom: 14px;
 }
 .mpc-l3-tab-btn {
-    padding: 8px 6px;
-    font-size: 0.78rem;
+    padding: 8px 6px !important;
+    font-size: 0.78rem !important;
 }
 .mpc-l3-returning-panel {
     padding: 14px;
@@ -853,12 +910,22 @@ display: none;
     margin-bottom: 3px;
 }
 .mpc-form-control {
-    padding: 9px 10px;
+    padding: 8px 10px;
     font-size: 15px; /* Prevents iOS zoom while staying compact */
     height: 40px;
 }
 textarea.mpc-form-control {
     height: auto;
+}
+
+/* Embedded Email Pill on Mobile */
+.mpc-email-input-wrap input#mpc_email.is-locked-email {
+    padding-right: 88px !important;
+}
+.mpc-embedded-email-pill {
+    right: 6px !important;
+    padding: 3px 8px !important;
+    font-size: 0.72rem !important;
 }
 
 .mpc-logistics-card-group {
