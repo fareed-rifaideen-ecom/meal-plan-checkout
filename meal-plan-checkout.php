@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-plan-checkout
- * Description: A companion plugin that provides a streamlined custom checkout wizard with login, auto-fill, direct payment routing, and coupon-based discount tiers. (Post-Payment Subscription Provisioning, Options L1/L3 Login UI & Per-Plan Logistics)
- * Version: 4.3.0
+ * Description: Streamlined custom checkout wizard with configurable sign-in layouts, dynamic Day-Before & Same-Day time slots, summary-card promo codes, alternate-email ordering, and strict post-payment subscription creation.
+ * Version: 4.4.0
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  * Author URI: https://fareed-rifaideen.netlify.app
  */
@@ -16,7 +16,27 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 }
 
 // ==========================================
-// 0. PER-PLAN SUBSCRIPTION LOGISTICS SCHEMA & PROFILE HELPER
+// 0. PREVENT PAGE CACHING ON CHECKOUT WIZARD PAGES
+// ==========================================
+add_action( 'template_redirect', 'mpc_disable_checkout_page_caching', 1 );
+function mpc_disable_checkout_page_caching() {
+    if ( is_singular() ) {
+        global $post;
+        if ( $post && has_shortcode( $post->post_content, 'meal_plan_checkout' ) ) {
+            if ( ! defined( 'DONOTCACHEPAGE' ) ) { define( 'DONOTCACHEPAGE', true ); }
+            if ( ! defined( 'DONOTCACHEOBJECT' ) ) { define( 'DONOTCACHEOBJECT', true ); }
+            if ( ! defined( 'DONOTCACHEDB' ) ) { define( 'DONOTCACHEDB', true ); }
+            nocache_headers();
+            header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+            header( 'Pragma: no-cache' );
+            header( 'Expires: Wed, 11 Jan 1984 05:00:00 GMT' );
+            header( 'X-LiteSpeed-Cache-Control: no-cache' );
+        }
+    }
+}
+
+// ==========================================
+// 0.1 PER-PLAN SUBSCRIPTION LOGISTICS SCHEMA & TIME SLOT HELPERS
 // ==========================================
 function mpc_ensure_subscription_logistics_columns() {
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
@@ -109,8 +129,51 @@ function mpc_record_user_logistics_profile( $user_id, $sub_id, $profile_data = a
     update_user_meta( $user_id, '_cmp_saved_logistics_profiles', $profiles );
 }
 
+/**
+ * Returns the master catalog of standard hourly time slot presets for the admin visual builder.
+ */
+function mpc_get_master_preset_time_slots() {
+    $slots = array();
+    for ( $i = 5; $i < 21; $i++ ) {
+        $start_time = date( 'g:i A', strtotime( "$i:00" ) );
+        $end_time   = date( 'g:i A', strtotime( ( $i + 1 ) . ':00' ) );
+        $slots[]    = $start_time . ' to ' . $end_time;
+    }
+    $slots[] = '5:00 PM to 8:00 PM';
+    return $slots;
+}
+
+/**
+ * Retrieves the active time slots for "Deliver Day Before" and "Deliver Same Day"
+ * configured in WP Admin > Meal Portal > Checkout Settings.
+ */
+function mpc_get_configured_time_slots() {
+    $default_all = array();
+    for ( $i = 5; $i < 20; $i++ ) {
+        $start_time    = date( 'g:i A', strtotime( "$i:00" ) );
+        $end_time      = date( 'g:i A', strtotime( ( $i + 1 ) . ':00' ) );
+        $default_all[] = $start_time . ' to ' . $end_time;
+    }
+
+    $day_before = get_option( 'mpc_slots_day_before', null );
+    if ( ! is_array( $day_before ) || empty( $day_before ) ) {
+        $day_before = $default_all;
+    }
+
+    $same_day = get_option( 'mpc_slots_same_day', null );
+    if ( ! is_array( $same_day ) || empty( $same_day ) ) {
+        $same_day = $default_all;
+    }
+
+    return array(
+        'day_before'           => array_values( array_unique( array_filter( array_map( 'trim', $day_before ) ) ) ),
+        'same_day'             => array_values( array_unique( array_filter( array_map( 'trim', $same_day ) ) ) ),
+        'pickup_hide_early_am' => ( get_option( 'mpc_pickup_hide_early_am', '1' ) === '1' ),
+    );
+}
+
 // ==========================================
-// 0.5 WP ADMIN: MEAL PORTAL > CHECKOUT SETTINGS (OPTIONS L1 & L3 TOGGLE)
+// 0.5 WP ADMIN: MEAL PORTAL > CHECKOUT SETTINGS
 // ==========================================
 add_action( 'admin_menu', 'mpc_register_checkout_settings_submenu', 65 );
 function mpc_register_checkout_settings_submenu() {
@@ -135,57 +198,155 @@ function mpc_render_checkout_settings_admin_page() {
     }
 
     global $wpdb;
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $notice     = '';
+    $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
+    $table_users = $wpdb->prefix . 'users';
+    $notice      = '';
 
-    // 1. Save Checkout Settings
+    // 1. Handle Single Pending Subscription Row Deletion
+    if ( isset( $_GET['mpc_del_pending_id'] ) && isset( $_GET['_wpnonce'] ) && current_user_can( 'manage_options' ) ) {
+        $del_id = intval( $_GET['mpc_del_pending_id'] );
+        if ( wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'mpc_del_single_pending_' . $del_id ) ) {
+            $deleted = $wpdb->delete( $table_subs, array( 'id' => $del_id, 'status' => 'pending' ), array( '%d', '%s' ) );
+            if ( $deleted ) {
+                $notice = '<div class="notice notice-success is-dismissible"><p>Pending subscription record <strong>#' . esc_html( $del_id ) . '</strong> was deleted.</p></div>';
+            }
+        }
+    }
+
+    // 2. Handle Bulk Selected Pending Subscription Deletion
+    if ( isset( $_POST['mpc_delete_selected_pending'] ) && check_admin_referer( 'mpc_pending_records_action', 'mpc_pending_records_nonce' ) ) {
+        if ( current_user_can( 'manage_options' ) ) {
+            $selected_ids = isset( $_POST['pending_sub_ids'] ) && is_array( $_POST['pending_sub_ids'] )
+                ? array_filter( array_map( 'intval', $_POST['pending_sub_ids'] ) )
+                : array();
+
+            if ( ! empty( $selected_ids ) ) {
+                $ids_sql       = implode( ',', $selected_ids );
+                $deleted_count = $wpdb->query( "DELETE FROM {$table_subs} WHERE status = 'pending' AND id IN ({$ids_sql})" );
+                $notice        = '<div class="notice notice-success is-dismissible"><p>Deleted <strong>' . intval( $deleted_count ) . '</strong> selected pending subscription record(s).</p></div>';
+            } else {
+                $notice = '<div class="notice notice-warning is-dismissible"><p>Please select at least one pending record to delete.</p></div>';
+            }
+        }
+    }
+
+    // 3. Handle Saving Checkout Settings & Time Slots
     if ( isset( $_POST['mpc_save_checkout_settings'] ) && check_admin_referer( 'mpc_checkout_settings_action', 'mpc_checkout_settings_nonce' ) ) {
         $login_mode = sanitize_text_field( wp_unslash( $_POST['mpc_checkout_login_mode'] ?? 'l1' ) );
         if ( ! in_array( $login_mode, array( 'l1', 'l3', 'both', 'step2' ), true ) ) {
             $login_mode = 'l1';
         }
-        $autofill_default = isset( $_POST['mpc_checkout_autofill_default'] ) ? '1' : '0';
-        $email_guard      = isset( $_POST['mpc_checkout_email_guard'] ) ? '1' : '0';
+        $autofill_default     = isset( $_POST['mpc_checkout_autofill_default'] ) ? '1' : '0';
+        $email_guard          = isset( $_POST['mpc_checkout_email_guard'] ) ? '1' : '0';
+        $pickup_hide_early_am = isset( $_POST['mpc_pickup_hide_early_am'] ) ? '1' : '0';
+
+        // Parse "Deliver Day Before" checked presets + custom text lines
+        $db_checked = isset( $_POST['mpc_db_preset_slots'] ) && is_array( $_POST['mpc_db_preset_slots'] )
+            ? array_map( 'sanitize_text_field', wp_unslash( $_POST['mpc_db_preset_slots'] ) )
+            : array();
+        $db_custom_raw = isset( $_POST['mpc_db_custom_slots'] ) ? sanitize_textarea_field( wp_unslash( $_POST['mpc_db_custom_slots'] ) ) : '';
+        $db_custom_arr = array_filter( array_map( 'trim', preg_split( '/[\r\n,]+/', $db_custom_raw ) ) );
+        $final_db_slots = array_values( array_unique( array_merge( $db_checked, $db_custom_arr ) ) );
+
+        // Parse "Deliver Same Day" checked presets + custom text lines
+        $sd_checked = isset( $_POST['mpc_sd_preset_slots'] ) && is_array( $_POST['mpc_sd_preset_slots'] )
+            ? array_map( 'sanitize_text_field', wp_unslash( $_POST['mpc_sd_preset_slots'] ) )
+            : array();
+        $sd_custom_raw = isset( $_POST['mpc_sd_custom_slots'] ) ? sanitize_textarea_field( wp_unslash( $_POST['mpc_sd_custom_slots'] ) ) : '';
+        $sd_custom_arr = array_filter( array_map( 'trim', preg_split( '/[\r\n,]+/', $sd_custom_raw ) ) );
+        $final_sd_slots = array_values( array_unique( array_merge( $sd_checked, $sd_custom_arr ) ) );
+
+        if ( empty( $final_db_slots ) ) {
+            $final_db_slots = array( '5:00 PM to 8:00 PM' );
+        }
+        if ( empty( $final_sd_slots ) ) {
+            $final_sd_slots = array( '8:00 AM to 9:00 AM' );
+        }
 
         update_option( 'mpc_checkout_login_mode', $login_mode );
         update_option( 'mpc_checkout_autofill_default', $autofill_default );
         update_option( 'mpc_checkout_email_guard', $email_guard );
+        update_option( 'mpc_pickup_hide_early_am', $pickup_hide_early_am );
+        update_option( 'mpc_slots_day_before', $final_db_slots );
+        update_option( 'mpc_slots_same_day', $final_sd_slots );
 
-        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Checkout Settings saved successfully.</strong></p></div>';
-    }
-
-    // 2. Purge Orphaned Pending Subscriptions (from legacy unpaid/failed/cancelled checkouts)
-    if ( isset( $_POST['mpc_purge_pending_subs'] ) && check_admin_referer( 'mpc_purge_pending_action', 'mpc_purge_pending_nonce' ) ) {
-        if ( current_user_can( 'manage_options' ) ) {
-            $deleted_count = $wpdb->query( "DELETE FROM {$table_subs} WHERE status = 'pending'" );
-            $notice        = '<div class="notice notice-success is-dismissible"><p>Cleaned up <strong>' . intval( $deleted_count ) . '</strong> unpaid/pending subscription record(s).</p></div>';
+        // Flush page & object caches so changes appear immediately on the frontend
+        if ( function_exists( 'wp_cache_flush' ) ) {
+            wp_cache_flush();
         }
+        if ( class_exists( 'LiteSpeed_Cache_API' ) && method_exists( 'LiteSpeed_Cache_API', 'purge_all' ) ) {
+            LiteSpeed_Cache_API::purge_all();
+        }
+        do_action( 'litespeed_purge_all' );
+
+        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Checkout Settings &amp; Delivery Time Slots saved successfully.</strong></p></div>';
     }
 
     $current_login_mode = get_option( 'mpc_checkout_login_mode', 'l1' );
     $autofill_default   = get_option( 'mpc_checkout_autofill_default', '1' );
     $email_guard        = get_option( 'mpc_checkout_email_guard', '1' );
 
-    $table_exists        = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) ) === $table_subs );
-    $pending_subs_count  = $table_exists ? intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$table_subs} WHERE status = 'pending'" ) ) : 0;
+    $slot_config      = mpc_get_configured_time_slots();
+    $master_presets   = mpc_get_master_preset_time_slots();
+    $saved_db_slots   = $slot_config['day_before'];
+    $saved_sd_slots   = $slot_config['same_day'];
+    $pickup_hide_am   = $slot_config['pickup_hide_early_am'];
+
+    $custom_db_only = array_diff( $saved_db_slots, $master_presets );
+    $custom_sd_only = array_diff( $saved_sd_slots, $master_presets );
+
+    $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) ) === $table_subs );
+    $pending_rows = array();
+    if ( $table_exists ) {
+        $pending_rows = $wpdb->get_results(
+            "SELECT s.*, u.display_name, u.user_email
+             FROM {$table_subs} s
+             LEFT JOIN {$table_users} u ON s.user_id = u.ID
+             WHERE s.status = 'pending'
+             ORDER BY s.id DESC"
+        );
+    }
     ?>
     <style>
-        .mpc-admin-wrap { max-width: 960px; margin-top: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .mpc-admin-wrap { max-width: 1120px; margin-top: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         .mpc-admin-header { background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; padding: 22px 28px; border-radius: 12px; margin-bottom: 22px; box-shadow: 0 4px 14px rgba(27,94,32,0.14); }
         .mpc-admin-header h1 { color: #fff; margin: 0; font-size: 1.6rem; font-weight: 800; }
         .mpc-admin-header p { color: #DCECC9; margin: 5px 0 0 0; font-size: 0.93rem; }
         .mpc-admin-card { background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 24px 28px; margin-bottom: 22px; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
         .mpc-admin-card h2 { margin-top: 0; color: #1e293b; font-size: 1.2rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 18px; }
-        .mpc-radio-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
-        @media (max-width: 768px) { .mpc-radio-grid { grid-template-columns: 1fr; } }
+        .mpc-radio-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 22px; }
+        @media (max-width: 782px) { .mpc-radio-grid { grid-template-columns: 1fr; } }
         .mpc-radio-card { border: 2px solid #e2e8f0; border-radius: 10px; padding: 15px 16px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: flex-start; gap: 12px; background: #f8fafc; }
         .mpc-radio-card:hover { border-color: #68B946; background: #fff; }
         .mpc-radio-card.is-selected { border-color: #379237; background: #f4fbf0; box-shadow: 0 4px 12px rgba(55,146,55,0.10); }
         .mpc-radio-card input[type="radio"] { margin-top: 3px; accent-color: #379237; transform: scale(1.15); }
         .mpc-radio-title { font-weight: 800; color: #0f172a; font-size: 0.96rem; display: block; margin-bottom: 4px; }
         .mpc-radio-desc { font-size: 0.84rem; color: #475569; line-height: 1.45; display: block; }
-        .mpc-toggle-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 12px; }
+        .mpc-toggle-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 12px; cursor: pointer; }
         .mpc-toggle-row input[type="checkbox"] { margin-top: 3px; accent-color: #379237; transform: scale(1.2); }
+
+        /* Dual Time Slot Visual Builder */
+        .mpc-slots-builder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-bottom: 18px; }
+        @media (max-width: 900px) { .mpc-slots-builder-grid { grid-template-columns: 1fr; } }
+        .mpc-slot-panel { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 18px; }
+        .mpc-slot-panel-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
+        .mpc-slot-panel-head h3 { margin: 0; font-size: 1.05rem; color: #1B5E20; font-weight: 800; }
+        .mpc-slot-quick-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+        .mpc-slot-qbtn { background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 3px 8px; font-size: 0.76rem; font-weight: 700; color: #334155; cursor: pointer; }
+        .mpc-slot-qbtn:hover { background: #EEF7E3; border-color: #379237; color: #1B5E20; }
+        .mpc-slot-pills-wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 14px; max-height: 290px; overflow-y: auto; padding-right: 4px; }
+        @media (max-width: 520px) { .mpc-slot-pills-wrap { grid-template-columns: 1fr; } }
+        .mpc-slot-check-pill { display: flex; align-items: center; gap: 7px; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 10px; font-size: 0.82rem; font-weight: 600; color: #334155; cursor: pointer; transition: 0.15s; }
+        .mpc-slot-check-pill:hover { border-color: #68B946; }
+        .mpc-slot-check-pill.is-checked { background: #EEF7E3; border-color: #379237; color: #1B5E20; font-weight: 700; }
+        .mpc-slot-check-pill input[type="checkbox"] { margin: 0; accent-color: #379237; }
+
+        /* Pending Records Table */
+        .mpc-pending-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 12px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+        .mpc-pending-table th { background: #f1f5f9; color: #1e293b; text-align: left; padding: 10px 12px; font-weight: 700; border-bottom: 2px solid #cbd5e1; }
+        .mpc-pending-table td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; color: #334155; }
+        .mpc-pending-table tr:hover td { background: #f8fafc; }
+        .mpc-wc-status-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; }
     </style>
 
     <div class="wrap mpc-admin-wrap">
@@ -193,99 +354,251 @@ function mpc_render_checkout_settings_admin_page() {
 
         <div class="mpc-admin-header">
             <h1>Meal Plan Checkout Settings</h1>
-            <p>Configure Customer Login UI/UX (Options L1 &amp; L3), Auto-Fill Behavior &amp; Post-Payment Subscription Provisioning.</p>
+            <p>Manage Customer Sign-In Layout, Delivery &amp; Pickup Time Slots, Returning Customer Preferences, and Pending Subscription Records.</p>
         </div>
 
         <form method="POST" action="">
             <?php wp_nonce_field( 'mpc_checkout_settings_action', 'mpc_checkout_settings_nonce' ); ?>
 
+            <!-- SECTION 1: CUSTOMER SIGN-IN LAYOUT -->
             <div class="mpc-admin-card">
-                <h2>1. Checkout Login UI/UX Mode (Step 1 &amp; Persistent Header)</h2>
-                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Choose how returning subscribers sign in during the checkout wizard. Signing in on Step 1 immediately waives the AED 150 Thermal Bag Deposit (if held) and unlocks email-restricted coupons.</p>
+                <h2>1. Customer Sign-In Layout</h2>
+                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Select how returning customers sign in during checkout. Signing in on Step 1 immediately waives the AED 150 Thermal Bag Deposit (when held on their account) and unlocks email-restricted promo codes.</p>
 
                 <div class="mpc-radio-grid" id="mpc-login-mode-cards">
                     <label class="mpc-radio-card <?php echo $current_login_mode === 'l1' ? 'is-selected' : ''; ?>">
                         <input type="radio" name="mpc_checkout_login_mode" value="l1" <?php checked( $current_login_mode, 'l1' ); ?>>
                         <span>
-                            <span class="mpc-radio-title">Option L1: Persistent Top Account Bar (Recommended)</span>
-                            <span class="mpc-radio-desc">Displays a sleek, collapsible sign-in &amp; account status bar above the progress steps so it stays accessible across Steps 1, 2, and 3.</span>
+                            <span class="mpc-radio-title">Persistent Top Account Bar</span>
+                            <span class="mpc-radio-desc">Displays a compact, collapsible sign-in and account status bar above the progress steps so it stays accessible across Steps 1, 2, and 3.</span>
                         </span>
                     </label>
 
                     <label class="mpc-radio-card <?php echo $current_login_mode === 'l3' ? 'is-selected' : ''; ?>">
                         <input type="radio" name="mpc_checkout_login_mode" value="l3" <?php checked( $current_login_mode, 'l3' ); ?>>
                         <span>
-                            <span class="mpc-radio-title">Option L3: Step 1 Two-Tab Switcher (New vs. Returning)</span>
-                            <span class="mpc-radio-desc">Displays prominent "✨ New Subscriber" and "👤 Returning Customer — Sign In" pill tabs at the top of Step 1 above the meal plans.</span>
+                            <span class="mpc-radio-title">Step 1 Customer Type Tabs (New vs. Returning)</span>
+                            <span class="mpc-radio-desc">Displays prominent two-tab navigation at the top of Step 1 allowing customers to switch between New Subscriber and Returning Customer Sign-In.</span>
                         </span>
                     </label>
 
                     <label class="mpc-radio-card <?php echo $current_login_mode === 'both' ? 'is-selected' : ''; ?>">
                         <input type="radio" name="mpc_checkout_login_mode" value="both" <?php checked( $current_login_mode, 'both' ); ?>>
                         <span>
-                            <span class="mpc-radio-title">Option L1 + L3 Combined</span>
-                            <span class="mpc-radio-desc">Shows the Two-Tab Switcher on Step 1 AND keeps the Persistent Top Account Bar active across Steps 2 and 3.</span>
+                            <span class="mpc-radio-title">Combined Top Account Bar &amp; Step 1 Tabs</span>
+                            <span class="mpc-radio-desc">Displays the Customer Type Tabs inside Step 1 while keeping the Persistent Top Account Bar active across all checkout steps.</span>
                         </span>
                     </label>
 
                     <label class="mpc-radio-card <?php echo $current_login_mode === 'step2' ? 'is-selected' : ''; ?>">
                         <input type="radio" name="mpc_checkout_login_mode" value="step2" <?php checked( $current_login_mode, 'step2' ); ?>>
                         <span>
-                            <span class="mpc-radio-title">Legacy Mode (Step 2 Only)</span>
-                            <span class="mpc-radio-desc">Keeps the customer login prompt strictly inside Step 2 (Delivery Information) only.</span>
+                            <span class="mpc-radio-title">Step 2 Delivery Section Login</span>
+                            <span class="mpc-radio-desc">Displays the customer sign-in prompt and account status bar strictly inside Step 2 (Delivery Information) only.</span>
                         </span>
                     </label>
                 </div>
 
-                <h2>2. Smart Checkout Convenience &amp; Safeguards</h2>
+                <h2>2. Returning Customer Preferences</h2>
 
                 <label class="mpc-toggle-row">
                     <input type="checkbox" name="mpc_checkout_autofill_default" value="1" <?php checked( $autofill_default, '1' ); ?>>
                     <span>
                         <strong style="color:#0f172a; display:block; margin-bottom:2px;">Auto-Fill Saved Delivery Details on Sign-In</strong>
-                        <span style="font-size:0.85rem; color:#64748b;">When enabled, signing in automatically populates the customer's saved name, phone, address, delivery timing, and allergies into Step 2 (they can still edit any field for a second or family plan).</span>
+                        <span style="font-size:0.85rem; color:#64748b;">Automatically populates the customer's saved name, phone, address, delivery timing, and allergies into Step 2 upon sign-in (customers can also click "Use a different email" to subscribe for someone else).</span>
                     </span>
                 </label>
 
                 <label class="mpc-toggle-row">
                     <input type="checkbox" name="mpc_checkout_email_guard" value="1" <?php checked( $email_guard, '1' ); ?>>
                     <span>
-                        <strong style="color:#0f172a; display:block; margin-bottom:2px;">Smart Existing-Email Prompt on Step 2</strong>
-                        <span style="font-size:0.85rem; color:#64748b;">When a logged-out guest types an email in Step 2 that already belongs to a registered customer, show an instant 1-click prompt to sign in and waive their bag deposit.</span>
+                        <strong style="color:#0f172a; display:block; margin-bottom:2px;">Existing Account Email Prompt on Step 2</strong>
+                        <span style="font-size:0.85rem; color:#64748b;">When a logged-out guest enters an email address on Step 2 that belongs to an existing account, display a 1-click prompt to sign in and waive their bag deposit.</span>
+                    </span>
+                </label>
+            </div>
+
+            <!-- SECTION 3: DELIVERY & PICKUP TIME SLOTS -->
+            <div class="mpc-admin-card">
+                <h2>3. Delivery &amp; Pickup Time Slots</h2>
+                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Assign the exact delivery/pickup time windows offered to customers when they select <strong>Deliver Day Before</strong> versus <strong>Deliver Same Day</strong> on the checkout page.</p>
+
+                <div class="mpc-slots-builder-grid">
+                    <!-- Column A: Deliver Day Before Slots -->
+                    <div class="mpc-slot-panel" data-slot-group="db">
+                        <div class="mpc-slot-panel-head">
+                            <h3>&#127769; Deliver Day Before &mdash; Time Slots</h3>
+                            <div class="mpc-slot-quick-btns">
+                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('db', 'evening')">Evening (5PM–8PM)</button>
+                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('db', 'all')">Select All</button>
+                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('db', 'none')">Clear</button>
+                            </div>
+                        </div>
+
+                        <div class="mpc-slot-pills-wrap">
+                            <?php foreach ( $master_presets as $preset_slot ) :
+                                $is_chk = in_array( $preset_slot, $saved_db_slots, true );
+                            ?>
+                                <label class="mpc-slot-check-pill <?php echo $is_chk ? 'is-checked' : ''; ?>">
+                                    <input type="checkbox" name="mpc_db_preset_slots[]" value="<?php echo esc_attr( $preset_slot ); ?>" <?php checked( $is_chk ); ?>>
+                                    <span><?php echo esc_html( $preset_slot ); ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <label style="font-size:0.8rem; font-weight:700; color:#334155; display:block; margin-bottom:4px;">Additional Custom "Deliver Day Before" Slots (One per line):</label>
+                        <textarea name="mpc_db_custom_slots" rows="2" style="width:100%; border:1px solid #cbd5e1; border-radius:6px; padding:7px 10px; font-size:0.84rem;" placeholder="e.g. 6:00 PM to 9:00 PM"><?php echo esc_textarea( implode( "\n", $custom_db_only ) ); ?></textarea>
+                    </div>
+
+                    <!-- Column B: Deliver Same Day Slots -->
+                    <div class="mpc-slot-panel" data-slot-group="sd">
+                        <div class="mpc-slot-panel-head">
+                            <h3>&#9728;&#65039; Deliver Same Day &mdash; Time Slots</h3>
+                            <div class="mpc-slot-quick-btns">
+                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('sd', 'morning')">Morning (5AM–12PM)</button>
+                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('sd', 'all')">Select All</button>
+                                <button type="button" class="mpc-slot-qbtn" onclick="mpcQuickSelectSlots('sd', 'none')">Clear</button>
+                            </div>
+                        </div>
+
+                        <div class="mpc-slot-pills-wrap">
+                            <?php foreach ( $master_presets as $preset_slot ) :
+                                $is_chk = in_array( $preset_slot, $saved_sd_slots, true );
+                            ?>
+                                <label class="mpc-slot-check-pill <?php echo $is_chk ? 'is-checked' : ''; ?>">
+                                    <input type="checkbox" name="mpc_sd_preset_slots[]" value="<?php echo esc_attr( $preset_slot ); ?>" <?php checked( $is_chk ); ?>>
+                                    <span><?php echo esc_html( $preset_slot ); ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <label style="font-size:0.8rem; font-weight:700; color:#334155; display:block; margin-bottom:4px;">Additional Custom "Deliver Same Day" Slots (One per line):</label>
+                        <textarea name="mpc_sd_custom_slots" rows="2" style="width:100%; border:1px solid #cbd5e1; border-radius:6px; padding:7px 10px; font-size:0.84rem;" placeholder="e.g. 11:00 AM to 1:00 PM"><?php echo esc_textarea( implode( "\n", $custom_sd_only ) ); ?></textarea>
+                    </div>
+                </div>
+
+                <label class="mpc-toggle-row">
+                    <input type="checkbox" name="mpc_pickup_hide_early_am" value="1" <?php checked( $pickup_hide_am ); ?>>
+                    <span>
+                        <strong style="color:#0f172a; display:block; margin-bottom:2px;">Hide Early Morning Slots (5:00 AM – 8:00 AM) When "Store Pick-up" Is Selected</strong>
+                        <span style="font-size:0.85rem; color:#64748b;">Automatically hides slots starting at 5:00 AM, 6:00 AM, or 7:00 AM when a customer chooses Store Pick-up instead of Home/Office Delivery.</span>
                     </span>
                 </label>
 
-                <div style="margin-top: 22px;">
-                    <button type="submit" name="mpc_save_checkout_settings" class="button button-primary" style="background:#379237; border-color:#1B5E20; font-weight:800; padding:6px 24px; height:auto; font-size:0.95rem; border-radius:8px;">
+                <div style="margin-top: 20px;">
+                    <button type="submit" name="mpc_save_checkout_settings" class="button button-primary" style="background:#379237; border-color:#1B5E20; font-weight:800; padding:8px 26px; height:auto; font-size:0.95rem; border-radius:8px;">
                         Save Checkout Settings
                     </button>
                 </div>
             </div>
         </form>
 
+        <!-- SECTION 4: UNPAID & PENDING SUBSCRIPTION RECORDS (INSPECTION TABLE & SELECTIVE DELETE) -->
         <div class="mpc-admin-card" style="border-left: 5px solid #379237;">
-            <h2>3. Post-Payment Subscription Creation Status</h2>
+            <h2>4. Unpaid &amp; Pending Subscription Records</h2>
             <p style="color:#334155; line-height:1.55; margin-top:0;">
-                <strong>✓ Active Protection:</strong> Subscriptions are created in <code>wp_cmp_subscriptions</code> <strong>only after payment is captured</strong> and the WooCommerce order status reaches <strong>Processing</strong> (or <strong>Completed</strong>). Failed, Cancelled, or Pending Payment orders never create a subscription record, never burn coupon usage limits, and never consume single-use VIP magic links.
+                <strong>✓ Active Protection:</strong> New subscriptions are created in <code>wp_cmp_subscriptions</code> <strong>only after payment is confirmed</strong> and the WooCommerce order status reaches <strong>Processing</strong> (or <strong>Completed</strong>). Failed, Cancelled, or Pending Payment orders do not create a subscription. Below is the list of any historical <code>status = 'pending'</code> records in the database so you can inspect and selectively delete them if needed.
             </p>
-            <?php if ( current_user_can( 'manage_options' ) ) : ?>
-                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:14px;">
-                    <div>
-                        <strong style="color:#0f172a;">Legacy Orphaned Pending Subscriptions in Database:</strong>
-                        <span style="display:inline-block; background:<?php echo $pending_subs_count > 0 ? '#fef3c7' : '#dcfce7'; ?>; color:<?php echo $pending_subs_count > 0 ? '#92400e' : '#166534'; ?>; font-weight:800; padding:2px 10px; border-radius:999px; font-size:0.85rem; margin-left:6px;">
-                            <?php echo intval( $pending_subs_count ); ?> found
-                        </span>
-                        <div style="font-size:0.82rem; color:#64748b; margin-top:3px;">Removes any historical <code>status = 'pending'</code> rows created before this update from abandoned or failed checkouts.</div>
-                    </div>
-                    <?php if ( $pending_subs_count > 0 ) : ?>
-                        <form method="POST" action="" style="margin:0;" onsubmit="return confirm('Remove all unpaid/pending subscription rows from wp_cmp_subscriptions? Active, Paused, and Completed plans will not be touched.');">
-                            <?php wp_nonce_field( 'mpc_purge_pending_action', 'mpc_purge_pending_nonce' ); ?>
-                            <button type="submit" name="mpc_purge_pending_subs" class="button" style="background:#dc2626; color:#fff; border:none; font-weight:700; padding:6px 16px; height:auto; border-radius:6px; cursor:pointer;">
-                                Purge <?php echo intval( $pending_subs_count ); ?> Pending Row(s)
-                            </button>
-                        </form>
-                    <?php endif; ?>
+
+            <?php if ( empty( $pending_rows ) ) : ?>
+                <div style="background:#f0fdf4; border:1px solid #86efac; color:#166534; padding:14px 18px; border-radius:8px; font-weight:700; margin-top:12px;">
+                    &#10003; Database is clean! There are 0 unpaid or pending subscription records in <code>wp_cmp_subscriptions</code>.
                 </div>
+            <?php else : ?>
+                <form method="POST" action="">
+                    <?php wp_nonce_field( 'mpc_pending_records_action', 'mpc_pending_records_nonce' ); ?>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <?php if ( current_user_can( 'manage_options' ) ) : ?>
+                                <button type="submit" name="mpc_delete_selected_pending" class="button" style="background:#dc2626; color:#fff; border:none; font-weight:700; padding:5px 14px; border-radius:6px; cursor:pointer;" onclick="return confirm('Delete the selected pending subscription records? Active, Paused, and Completed subscriptions will not be affected.');">
+                                    &#128465; Delete Selected Records
+                                </button>
+                            <?php endif; ?>
+                            <span style="font-size:0.86rem; color:#64748b;">Found <strong><?php echo count( $pending_rows ); ?></strong> pending record(s)</span>
+                        </div>
+                    </div>
+
+                    <div style="overflow-x:auto;">
+                        <table class="mpc-pending-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:32px;"><input type="checkbox" id="mpc-select-all-pending"></th>
+                                    <th>Sub ID</th>
+                                    <th>WC Order</th>
+                                    <th>Customer</th>
+                                    <th>Plan Name</th>
+                                    <th>Net Amount</th>
+                                    <th>WC Order Status</th>
+                                    <th>Created Date</th>
+                                    <th style="text-align:right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ( $pending_rows as $pr ) :
+                                    $wc_id       = intval( $pr->wc_order_id );
+                                    $wc_order    = ( $wc_id > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $wc_id ) : false;
+                                    $wc_status   = $wc_order ? $wc_order->get_status() : 'missing';
+                                    $net_amt     = max( 0, floatval( $pr->plan_price ) - floatval( $pr->discount_amount ) );
+                                    $cust_name   = ! empty( $pr->display_name ) ? $pr->display_name : 'User #' . intval( $pr->user_id );
+                                    $cust_email  = ! empty( $pr->user_email ) ? $pr->user_email : '';
+                                    if ( $wc_order ) {
+                                        $b_name = trim( $wc_order->get_billing_first_name() . ' ' . $wc_order->get_billing_last_name() );
+                                        if ( ! empty( $b_name ) ) $cust_name = $b_name;
+                                        if ( empty( $cust_email ) ) $cust_email = $wc_order->get_billing_email();
+                                    }
+
+                                    $badge_bg  = '#fef3c7';
+                                    $badge_col = '#92400e';
+                                    if ( in_array( $wc_status, array( 'failed', 'cancelled', 'trash', 'missing' ), true ) ) {
+                                        $badge_bg  = '#fee2e2';
+                                        $badge_col = '#991b1b';
+                                    } elseif ( in_array( $wc_status, array( 'processing', 'completed' ), true ) ) {
+                                        $badge_bg  = '#dcfce7';
+                                        $badge_col = '#166534';
+                                    }
+
+                                    $single_del_url = wp_nonce_url(
+                                        add_query_arg( array( 'page' => 'cmp-checkout-settings', 'mpc_del_pending_id' => $pr->id ), admin_url( 'admin.php' ) ),
+                                        'mpc_del_single_pending_' . $pr->id
+                                    );
+                                ?>
+                                    <tr>
+                                        <td><input type="checkbox" name="pending_sub_ids[]" value="<?php echo esc_attr( $pr->id ); ?>" class="mpc-pending-row-cb"></td>
+                                        <td><strong>#<?php echo intval( $pr->id ); ?></strong></td>
+                                        <td>
+                                            <?php if ( $wc_id > 0 ) : ?>
+                                                <a href="<?php echo esc_url( admin_url( 'post.php?post=' . $wc_id . '&action=edit' ) ); ?>" target="_blank" style="font-weight:700; color:#1B5E20;">
+                                                    Order #<?php echo intval( $wc_id ); ?> &nearr;
+                                                </a>
+                                            <?php else : ?>
+                                                <span style="color:#94a3b8;">None</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <strong><?php echo esc_html( $cust_name ); ?></strong><br>
+                                            <span style="font-size:0.8rem; color:#64748b;"><?php echo esc_html( $cust_email ); ?></span>
+                                        </td>
+                                        <td><?php echo esc_html( $pr->plan_name ); ?> (<?php echo intval( $pr->total_days ); ?>d)</td>
+                                        <td><strong>AED <?php echo number_format( $net_amt, 2 ); ?></strong></td>
+                                        <td>
+                                            <span class="mpc-wc-status-badge" style="background:<?php echo esc_attr( $badge_bg ); ?>; color:<?php echo esc_attr( $badge_col ); ?>;">
+                                                <?php echo esc_html( $wc_status ); ?>
+                                            </span>
+                                        </td>
+                                        <td><?php echo esc_html( ! empty( $pr->start_date ) ? date( 'd M Y, h:i A', strtotime( $pr->start_date ) ) : '-' ); ?></td>
+                                        <td style="text-align:right;">
+                                            <?php if ( current_user_can( 'manage_options' ) ) : ?>
+                                                <a href="<?php echo esc_url( $single_del_url ); ?>" onclick="return confirm('Delete pending subscription record #<?php echo intval( $pr->id ); ?>?');" style="color:#dc2626; font-weight:700; text-decoration:none; padding:4px 8px; border:1px solid #fecaca; background:#fff1f2; border-radius:4px; font-size:0.8rem;">
+                                                    Delete
+                                                </a>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </form>
             <?php endif; ?>
         </div>
     </div>
@@ -301,6 +614,41 @@ function mpc_render_checkout_settings_admin_page() {
             }
         });
     });
+
+    document.querySelectorAll('.mpc-slot-check-pill input[type="checkbox"]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            this.closest('.mpc-slot-check-pill').classList.toggle('is-checked', this.checked);
+        });
+    });
+
+    function mpcQuickSelectSlots(group, mode) {
+        const panel = document.querySelector('.mpc-slot-panel[data-slot-group="' + group + '"]');
+        if (!panel) return;
+        panel.querySelectorAll('.mpc-slot-check-pill input[type="checkbox"]').forEach(function(cb) {
+            const val = cb.value;
+            let shouldCheck = false;
+            if (mode === 'all') {
+                shouldCheck = true;
+            } else if (mode === 'none') {
+                shouldCheck = false;
+            } else if (mode === 'evening') {
+                shouldCheck = /^(5|6|7):00 PM/.test(val);
+            } else if (mode === 'morning') {
+                shouldCheck = /^(5|6|7|8|9|10|11):00 AM/.test(val);
+            }
+            cb.checked = shouldCheck;
+            cb.closest('.mpc-slot-check-pill').classList.toggle('is-checked', shouldCheck);
+        });
+    }
+
+    const selectAllPending = document.getElementById('mpc-select-all-pending');
+    if (selectAllPending) {
+        selectAllPending.addEventListener('change', function() {
+            document.querySelectorAll('.mpc-pending-row-cb').forEach(function(cb) {
+                cb.checked = selectAllPending.checked;
+            });
+        });
+    }
     </script>
     <?php
 }
@@ -313,7 +661,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout' ) ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.3.0';
+        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.4.0';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -396,7 +744,7 @@ function mpc_validate_woocommerce_coupon_rules( $coupon, $product_id, $price, $u
     $restricted_emails = $coupon->get_email_restrictions();
     if ( ! empty( $restricted_emails ) ) {
         if ( empty( $user_email ) ) {
-            return 'This coupon is restricted to specific accounts. Please sign in at the top of this page (or enter your email in Step 2) before applying.';
+            return 'This coupon is restricted to specific accounts. Please sign in or enter your email in Step 2 before applying.';
         }
         $email_valid = false;
         foreach ( $restricted_emails as $restricted_email ) {
@@ -599,16 +947,45 @@ function mpc_ajax_forgot_password() {
 add_action( 'wp_ajax_nopriv_mpc_check_email_exists', 'mpc_ajax_check_email_exists' );
 add_action( 'wp_ajax_mpc_check_email_exists',        'mpc_ajax_check_email_exists' );
 function mpc_ajax_check_email_exists() {
+    global $wpdb;
     $email = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
-    if ( empty( $email ) || is_user_logged_in() ) {
+    if ( empty( $email ) ) {
         wp_send_json_success( array( 'exists' => false ) );
     }
-    $exists = email_exists( $email ) ? true : false;
-    wp_send_json_success( array( 'exists' => $exists ) );
+
+    if ( is_user_logged_in() ) {
+        $curr = wp_get_current_user();
+        if ( strcasecmp( $curr->user_email, $email ) === 0 ) {
+            wp_send_json_success( array( 'exists' => false, 'same_as_current' => true ) );
+        }
+    }
+
+    $target_uid = email_exists( $email );
+    if ( ! $target_uid ) {
+        wp_send_json_success( array( 'exists' => false ) );
+    }
+
+    $is_staff = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
+    $deposit_meta = get_user_meta( $target_uid, '_cmp_deposit_held', true );
+    if ( $deposit_meta === '' ) {
+        $past_plans = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status IN ('active', 'paused', 'completed')",
+            $target_uid
+        ) );
+        $requires_deposit = ( intval( $past_plans ) === 0 );
+    } else {
+        $requires_deposit = ( $deposit_meta !== 'yes' && $deposit_meta !== 'own_bag' );
+    }
+
+    wp_send_json_success( array(
+        'exists'           => true,
+        'is_staff'         => $is_staff,
+        'requires_deposit' => $requires_deposit,
+    ) );
 }
 
 // ==========================================
-// 7. AJAX: ORDER PROCESSING (PRE-PAYMENT BLUEPRINT ONLY — NO EARLY SUBSCRIPTION INSERT)
+// 7. AJAX: ORDER PROCESSING (PRE-PAYMENT BLUEPRINT & SMART DIFFERENT-EMAIL ROUTING)
 // ==========================================
 add_action( 'wp_ajax_nopriv_mpc_process_order', 'mpc_process_order' );
 add_action( 'wp_ajax_mpc_process_order',        'mpc_process_order' );
@@ -691,49 +1068,71 @@ function mpc_process_order() {
         }
     }
 
-    // ---- USER CREATION & DEPOSIT WALLET LOGIC ----
-    $user_id          = get_current_user_id();
+    // ---- SMART ACCOUNT ROUTING (SUPPORTS SUBSCRIBING WITH A DIFFERENT EMAIL) ----
+    $logged_in_uid    = get_current_user_id();
+    $logged_in_user   = $logged_in_uid > 0 ? get_userdata( $logged_in_uid ) : false;
+    $is_staff_actor   = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
+    $table_subs       = $wpdb->prefix . 'cmp_subscriptions';
+    $user_id          = 0;
     $requires_deposit = false;
     $deposit_meta     = '';
-    $table_subs       = $wpdb->prefix . 'cmp_subscriptions';
 
-    if ( ! $user_id ) {
-        if ( email_exists( $email ) ) {
-            wp_send_json_error( 'An account with this email already exists. Please sign in at the top of the page to continue.' );
-        }
-        $user_id = wp_create_user( $email, $password, $email );
-        if ( is_wp_error( $user_id ) ) {
-            wp_send_json_error( $user_id->get_error_message() );
-        }
-        wp_clear_auth_cookie();
-        wp_set_current_user( $user_id );
-        wp_set_auth_cookie( $user_id, true );
+    $is_different_email = ( $logged_in_user && strcasecmp( $logged_in_user->user_email, $email ) !== 0 );
 
-        $requires_deposit = ! $is_own_bag_token;
-    } else {
-        $deposit_meta = get_user_meta( $user_id, '_cmp_deposit_held', true );
-        if ( $is_own_bag_token ) {
-            $requires_deposit = false;
-        } else {
-            if ( $deposit_meta === '' ) {
-                $past_plans = $wpdb->get_var( $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active', 'paused', 'completed')",
-                    $user_id
-                ) );
-                if ( intval( $past_plans ) > 0 ) {
-                    update_user_meta( $user_id, '_cmp_deposit_held', 'yes' );
-                    $requires_deposit = false;
-                    $deposit_meta     = 'yes';
-                } else {
-                    $requires_deposit = true;
-                }
+    if ( ! $logged_in_uid || $is_different_email ) {
+        $existing_email_uid = email_exists( $email );
+
+        if ( $existing_email_uid ) {
+            // If an Admin/FOH/Menu Manager is placing an order for an existing customer's email, route to that customer without requiring their password
+            if ( $is_staff_actor ) {
+                $user_id = intval( $existing_email_uid );
             } else {
-                $requires_deposit = ( $deposit_meta !== 'yes' && $deposit_meta !== 'own_bag' );
+                wp_send_json_error( 'An account with the email "' . $email . '" already exists. Please sign in with that account to continue.' );
             }
+        } else {
+            if ( empty( $password ) ) {
+                wp_send_json_error( 'Please enter a password to create the new account for ' . $email . '.' );
+            }
+            $new_uid = wp_create_user( $email, $password, $email );
+            if ( is_wp_error( $new_uid ) ) {
+                wp_send_json_error( $new_uid->get_error_message() );
+            }
+            $user_id = intval( $new_uid );
+
+            // Switch browser session to the new customer account ONLY if the current user is not a staff member
+            if ( ! $is_staff_actor ) {
+                wp_clear_auth_cookie();
+                wp_set_current_user( $user_id );
+                wp_set_auth_cookie( $user_id, true );
+            }
+        }
+    } else {
+        $user_id = $logged_in_uid;
+    }
+
+    // Evaluate Deposit Requirement for the Target User ID
+    $deposit_meta = get_user_meta( $user_id, '_cmp_deposit_held', true );
+    if ( $is_own_bag_token ) {
+        $requires_deposit = false;
+    } else {
+        if ( $deposit_meta === '' ) {
+            $past_plans = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active', 'paused', 'completed')",
+                $user_id
+            ) );
+            if ( intval( $past_plans ) > 0 ) {
+                update_user_meta( $user_id, '_cmp_deposit_held', 'yes' );
+                $requires_deposit = false;
+                $deposit_meta     = 'yes';
+            } else {
+                $requires_deposit = true;
+            }
+        } else {
+            $requires_deposit = ( $deposit_meta !== 'yes' && $deposit_meta !== 'own_bag' );
         }
     }
 
-    // Check if the customer already has another active/paused subscription
+    // Check if the target customer already has another active/paused subscription
     $existing_active_subs = intval( $wpdb->get_var( $wpdb->prepare(
         "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')",
         $user_id
@@ -741,11 +1140,13 @@ function mpc_process_order() {
 
     // --- SAVE USER META (Preserves existing active plan's user_meta if multi-plan customer) ---
     wp_update_user( array( 'ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name ) );
-    update_user_meta( $user_id, 'billing_phone',     $phone );
-    update_user_meta( $user_id, 'billing_address_1', $address_1 );
-    update_user_meta( $user_id, 'billing_address_2', $address_2 );
-    update_user_meta( $user_id, 'billing_city',      'Dubai' );
-    update_user_meta( $user_id, 'billing_country',   'AE' );
+    update_user_meta( $user_id, 'billing_first_name', $first_name );
+    update_user_meta( $user_id, 'billing_last_name',  $last_name );
+    update_user_meta( $user_id, 'billing_phone',      $phone );
+    update_user_meta( $user_id, 'billing_address_1',  $address_1 );
+    update_user_meta( $user_id, 'billing_address_2',  $address_2 );
+    update_user_meta( $user_id, 'billing_city',       'Dubai' );
+    update_user_meta( $user_id, 'billing_country',    'AE' );
 
     if ( $existing_active_subs === 0 ) {
         update_user_meta( $user_id, 'delivery_method', $delivery_method );
@@ -763,6 +1164,7 @@ function mpc_process_order() {
         if ( stripos( $plan_title, '20' ) !== false ) $days = 20;
         if ( stripos( $plan_title, '24' ) !== false ) $days = 24;
         if ( stripos( $plan_title, '5' )  !== false ) $days = 5;
+        if ( stripos( $plan_title, '10' ) !== false ) $days = 10;
         if ( stripos( $plan_title, '3' )  !== false && stripos( $plan_title, 'juice' ) !== false ) $days = 3;
     }
 
@@ -811,7 +1213,6 @@ function mpc_process_order() {
     $order->update_meta_data( '_cmp_pickup_location',    ( $delivery_method === 'Pickup' ) ? $pickup_location : '' );
     $order->update_meta_data( 'allergies',               $allergies );
 
-    // Logistics Note for Own Bag
     if ( $is_own_bag_token || $deposit_meta === 'own_bag' ) {
         $order->update_meta_data( '_mpc_is_own_bag', '1' );
         if ( ! empty( $vip_token ) ) {
@@ -871,14 +1272,12 @@ function mpc_process_order() {
     $final_order_total = (float) $order->get_total();
 
     if ( $final_order_total <= 0 ) {
-        // 100% Free order: payment_complete() transitions order to Processing/Completed, which triggers mpc_activate_subscription_on_payment()
         $order->payment_complete();
         $order->add_order_note( '100% Free VIP Coupon applied. Payment gateway bypassed and subscription provisioned.' );
         mpc_activate_subscription_on_payment( $order->get_id() );
 
         wp_send_json_success( array( 'payment_url' => esc_url_raw( $order->get_checkout_order_received_url() ) ) );
     } else {
-        // Paid order: Route to N-Genius Payment Bridge. Subscription will ONLY be created once payment succeeds and order becomes Processing.
         $main_site_url = 'https://thecyclehub.com';
         $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
 
@@ -924,11 +1323,15 @@ function mpc_process_order() {
 }
 
 // ==========================================
-// 8. FRONTEND WIZARD RENDERER (OPTIONS L1 & L3 + INLINE FORGOT PASSWORD)
+// 8. FRONTEND WIZARD RENDERER
 // ==========================================
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
 function mpc_render_checkout_wizard() {
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+        define( 'DONOTCACHEPAGE', true );
+    }
+
     if ( ! class_exists( 'WooCommerce' ) ) {
         return '<p>WooCommerce is required.</p>';
     }
@@ -941,6 +1344,7 @@ function mpc_render_checkout_wizard() {
     $login_ui_mode    = get_option( 'mpc_checkout_login_mode', 'l1' );
     $autofill_default = ( get_option( 'mpc_checkout_autofill_default', '1' ) === '1' );
     $email_guard_on   = ( get_option( 'mpc_checkout_email_guard', '1' ) === '1' );
+    $slot_config      = mpc_get_configured_time_slots();
 
     $show_l1_bar      = in_array( $login_ui_mode, array( 'l1', 'both' ), true );
     $show_l3_tabs     = in_array( $login_ui_mode, array( 'l3', 'both' ), true );
@@ -1012,7 +1416,7 @@ function mpc_render_checkout_wizard() {
         }
 
         $saved_user_details = array(
-            'first_name'      => $current_user->first_name ?: get_user_meta( $uid, 'billing_first_name', true ),
+            'first_name'      => ( $current_user->first_name ?: get_user_meta( $uid, 'billing_first_name', true ) ) ?: $current_user->display_name,
             'last_name'       => $current_user->last_name ?: get_user_meta( $uid, 'billing_last_name', true ),
             'email'           => $current_user->user_email,
             'phone'           => get_user_meta( $uid, 'billing_phone', true ),
@@ -1028,164 +1432,16 @@ function mpc_render_checkout_wizard() {
 
     ob_start();
     ?>
-    <style>
-        /* Option L1 & Option L3 Scoped Checkout Login Styles */
-        .mpc-top-account-bar {
-            background: linear-gradient(135deg, #f8fafc 0%, #f0fdf4 100%);
-            border: 1.5px solid #DCECC9;
-            border-left: 5px solid #379237;
-            border-radius: 12px;
-            padding: 14px 18px;
-            margin-bottom: 22px;
-            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.05);
-            transition: all 0.2s ease;
-        }
-        .mpc-top-account-bar.is-logged-in {
-            background: linear-gradient(135deg, #f0fdf4 0%, #EEF7E3 100%);
-            border-color: #86efac;
-            border-left: 5px solid #1B5E20;
-        }
-        .mpc-account-bar-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        .mpc-account-bar-title {
-            font-size: 0.95rem;
-            color: #1e293b;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-        .mpc-account-toggle-btn {
-            background: #379237;
-            color: #ffffff !important;
-            border: none;
-            border-radius: 8px;
-            padding: 7px 15px;
-            font-size: 0.85rem;
-            font-weight: 800;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            text-decoration: none !important;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .mpc-account-toggle-btn:hover {
-            background: #1B5E20;
-            transform: translateY(-1px);
-        }
-        .mpc-inline-auth-drawer {
-            display: none;
-            margin-top: 14px;
-            padding-top: 14px;
-            border-top: 1px dashed #cbd5e1;
-        }
-        .mpc-inline-auth-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr auto;
-            gap: 10px;
-            align-items: center;
-        }
-        @media (max-width: 768px) {
-            .mpc-inline-auth-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        .mpc-auth-links-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 10px;
-            font-size: 0.84rem;
-        }
-        .mpc-deposit-waived-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            background: #dcfce7;
-            color: #166534;
-            border: 1px solid #86efac;
-            padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 0.78rem;
-            font-weight: 800;
-        }
-
-        /* Option L3: Step 1 Two-Tab Mode Switcher */
-        .mpc-l3-mode-tabs {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-            background: #f1f5f9;
-            padding: 6px;
-            border-radius: 12px;
-            border: 1px solid #cbd5e1;
-            margin-bottom: 20px;
-        }
-        .mpc-l3-tab-btn {
-            background: transparent;
-            color: #475569;
-            border: none;
-            border-radius: 9px;
-            padding: 11px 14px;
-            font-size: 0.92rem;
-            font-weight: 800;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 7px;
-            text-align: center;
-        }
-        .mpc-l3-tab-btn.active {
-            background: #ffffff;
-            color: #1B5E20;
-            box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
-            border: 1px solid #DCECC9;
-        }
-        .mpc-l3-returning-panel {
-            display: none;
-            background: #ffffff;
-            border: 1.5px solid #DCECC9;
-            border-top: 4px solid #379237;
-            border-radius: 14px;
-            padding: 22px;
-            margin-bottom: 22px;
-            box-shadow: 0 8px 22px rgba(27, 94, 32, 0.06);
-        }
-        .mpc-email-exists-hint {
-            display: none;
-            margin-top: 6px;
-            padding: 8px 12px;
-            background: #fffbeb;
-            border: 1px solid #fde68a;
-            border-left: 4px solid #f59e0b;
-            border-radius: 6px;
-            font-size: 0.83rem;
-            color: #92400e;
-            font-weight: 600;
-        }
-    </style>
-
     <?php if ( is_user_logged_in() ) : ?>
         <script>var mpcSavedDetails = <?php echo wp_json_encode( $saved_user_details ); ?>;</script>
     <?php endif; ?>
 
-    <div class="mpc-checkout-container">
+    <div class="mpc-checkout-container" data-login-mode="<?php echo esc_attr( $login_ui_mode ); ?>">
 
         <div class="mpc-wizard-area">
 
             <!-- =========================================================
-                 OPTION L1: PERSISTENT TOP ACCOUNT & SIGN-IN BAR (STEPS 1-3)
+                 PERSISTENT TOP ACCOUNT BAR (VISIBLE IN MODES 'l1' & 'both')
                  ========================================================= -->
             <?php if ( $show_l1_bar ) : ?>
                 <div id="mpc-top-account-bar" class="mpc-top-account-bar <?php echo is_user_logged_in() ? 'is-logged-in' : ''; ?>">
@@ -1193,7 +1449,7 @@ function mpc_render_checkout_wizard() {
                         <div class="mpc-account-bar-header">
                             <div class="mpc-account-bar-title">
                                 <span>&#128100; <strong>Already a subscriber?</strong></span>
-                                <span style="font-weight:500; color:#475569; font-size:0.88rem;">Sign in to waive your bag deposit &amp; auto-fill your saved delivery details.</span>
+                                <span class="mpc-account-bar-sub">Sign in to waive your bag deposit &amp; auto-fill delivery details.</span>
                             </div>
                             <button type="button" id="mpc-top-login-toggle" class="mpc-account-toggle-btn">
                                 <span>Sign In</span>
@@ -1202,44 +1458,43 @@ function mpc_render_checkout_wizard() {
                         </div>
 
                         <div id="mpc-top-auth-drawer" class="mpc-inline-auth-drawer">
-                            <!-- Sign In View -->
                             <div id="mpc-top-signin-view">
                                 <div class="mpc-inline-auth-grid">
                                     <input type="email" id="mpc_top_login_email" class="mpc-form-control" placeholder="Email Address" autocomplete="username">
                                     <input type="password" id="mpc_top_login_pwd" class="mpc-form-control" placeholder="Password" autocomplete="current-password">
-                                    <button type="button" id="mpc-top-login-submit" class="mpc-btn" style="background:#379237; color:#fff; height:44px; padding:0 22px; font-weight:800; white-space:nowrap;">Sign In</button>
+                                    <button type="button" id="mpc-top-login-submit" class="mpc-btn mpc-auth-submit-btn">Sign In</button>
                                 </div>
                                 <div class="mpc-auth-links-row">
-                                    <span id="mpc-top-login-msg" style="color:#e11d48; font-weight:700;"></span>
-                                    <a href="#forgot" id="mpc-top-show-forgot" style="color:#1B5E20; font-weight:700; text-decoration:underline;">Forgot Password?</a>
+                                    <span id="mpc-top-login-msg" class="mpc-auth-err-msg"></span>
+                                    <a href="#forgot" id="mpc-top-show-forgot" class="mpc-auth-link">Forgot Password?</a>
                                 </div>
                             </div>
 
-                            <!-- Inline Forgot Password View -->
                             <div id="mpc-top-forgot-view" style="display:none;">
-                                <p style="margin:0 0 10px 0; font-size:0.86rem; color:#334155;">Enter your registered email address and we will send you a password reset link:</p>
-                                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                    <input type="email" id="mpc_top_forgot_email" class="mpc-form-control" placeholder="Enter your email address" style="flex:1; min-width:220px;">
-                                    <button type="button" id="mpc-top-forgot-submit" class="mpc-btn" style="background:#334155; color:#fff; height:44px; padding:0 20px; font-weight:800;">Send Reset Link</button>
+                                <p class="mpc-auth-help-text">Enter your registered email address and we will send you a password reset link:</p>
+                                <div class="mpc-inline-forgot-grid">
+                                    <input type="email" id="mpc_top_forgot_email" class="mpc-form-control" placeholder="Enter your email address">
+                                    <button type="button" id="mpc-top-forgot-submit" class="mpc-btn mpc-auth-reset-btn">Send Reset Link</button>
                                 </div>
                                 <div class="mpc-auth-links-row">
                                     <span id="mpc-top-forgot-msg" style="font-weight:700;"></span>
-                                    <a href="#signin" id="mpc-top-back-signin" style="color:#1B5E20; font-weight:700; text-decoration:underline;">&larr; Back to Sign In</a>
+                                    <a href="#signin" id="mpc-top-back-signin" class="mpc-auth-link">&larr; Back to Sign In</a>
                                 </div>
                             </div>
                         </div>
                     <?php else : ?>
-                        <div class="mpc-account-bar-header">
-                            <div class="mpc-account-bar-title">
-                                <span style="color:#1B5E20;">&#10003; <strong>Welcome back, <?php echo esc_html( $saved_user_details['first_name'] ); ?>!</strong></span>
-                                <?php if ( $requires_deposit_init === 'false' ) : ?>
-                                    <span class="mpc-deposit-waived-pill">&#10003; Thermal Bag Deposit Waived</span>
-                                <?php endif; ?>
-                            </div>
-                            <label style="cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:0.86rem; font-weight:700; color:#1B5E20; margin:0;">
-                                <input type="checkbox" id="mpc_use_saved_details" <?php echo $autofill_default ? 'checked' : ''; ?> style="accent-color:#379237; transform:scale(1.15);">
-                                <span>Auto-fill my saved delivery details</span>
+                        <div class="mpc-logged-bar-row-1">
+                            <span class="mpc-welcome-name">&#10003; Welcome back, <strong><?php echo esc_html( $saved_user_details['first_name'] ); ?></strong>!</span>
+                            <?php if ( $requires_deposit_init === 'false' ) : ?>
+                                <span class="mpc-deposit-waived-pill">&#10003; Bag Deposit Waived</span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="mpc-logged-bar-row-2">
+                            <label class="mpc-autofill-check-label">
+                                <input type="checkbox" class="mpc-use-saved-details-cb" id="mpc_use_saved_details" <?php echo $autofill_default ? 'checked' : ''; ?>>
+                                <span>Auto-fill saved details</span>
                             </label>
+                            <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -1251,67 +1506,81 @@ function mpc_render_checkout_wizard() {
                 <div class="mpc-step-indicator" data-step="3" id="mpc-indicator-meals"><div class="mpc-step-circle">3</div><span>Dietary Info</span></div>
             </div>
 
+            <!-- =========================================================
+                 STEP 1: SELECT PLAN (+ CUSTOMER TYPE TABS IN MODES 'l3' & 'both')
+                 ========================================================= -->
             <div id="mpc-step-1" class="mpc-step-content active">
                 <h2 style="margin-top: 0; color: #222;">Choose Your Plan</h2>
-                <p style="color: #666; margin-bottom: 18px;">Select a meal plan to get started. You will choose your specific daily meals within your flexible quota through the Customer Portal after your subscription is confirmed.</p>
+                <p style="color: #666; margin-bottom: 16px;">Select a meal plan to get started. You will choose your specific daily meals within your flexible quota through the Customer Portal after your subscription is confirmed.</p>
 
-                <!-- =========================================================
-                     OPTION L3: STEP 1 TWO-TAB SWITCHER (NEW vs. RETURNING)
-                     ========================================================= -->
-                <?php if ( $show_l3_tabs && ! is_user_logged_in() ) : ?>
+                <?php if ( $show_l3_tabs ) : ?>
                     <div id="mpc-l3-wrapper">
-                        <div class="mpc-l3-mode-tabs">
-                            <button type="button" class="mpc-l3-tab-btn active" data-l3-tab="new">
-                                <span>&#10024; New Subscriber</span>
-                            </button>
-                            <button type="button" class="mpc-l3-tab-btn" data-l3-tab="returning">
-                                <span>&#128100; Returning Customer &mdash; Sign In</span>
-                            </button>
-                        </div>
-
-                        <div id="mpc-l3-returning-panel" class="mpc-l3-returning-panel">
-                            <div id="mpc-l3-signin-view">
-                                <h3 style="margin:0 0 6px 0; color:#1B5E20; font-size:1.15rem;">Welcome Back to The Cycle Bistro</h3>
-                                <p style="margin:0 0 14px 0; color:#475569; font-size:0.88rem;">Sign in to automatically waive your AED 150 Thermal Bag Deposit and pre-fill your delivery preferences.</p>
-                                <div class="mpc-inline-auth-grid">
-                                    <input type="email" id="mpc_l3_login_email" class="mpc-form-control" placeholder="Email Address" autocomplete="username">
-                                    <input type="password" id="mpc_l3_login_pwd" class="mpc-form-control" placeholder="Password" autocomplete="current-password">
-                                    <button type="button" id="mpc-l3-login-submit" class="mpc-btn" style="background:#379237; color:#fff; height:44px; padding:0 22px; font-weight:800; white-space:nowrap;">Sign In &amp; Continue</button>
-                                </div>
-                                <div class="mpc-auth-links-row">
-                                    <span id="mpc-l3-login-msg" style="color:#e11d48; font-weight:700;"></span>
-                                    <a href="#forgot-l3" id="mpc-l3-show-forgot" style="color:#1B5E20; font-weight:700; text-decoration:underline;">Forgot Password?</a>
-                                </div>
+                        <?php if ( ! is_user_logged_in() ) : ?>
+                            <div class="mpc-l3-mode-tabs">
+                                <button type="button" class="mpc-l3-tab-btn active" data-l3-tab="new">
+                                    <span>&#10024; New Subscriber</span>
+                                </button>
+                                <button type="button" class="mpc-l3-tab-btn" data-l3-tab="returning">
+                                    <span>&#128100; Returning Customer &mdash; Sign In</span>
+                                </button>
                             </div>
 
-                            <div id="mpc-l3-forgot-view" style="display:none;">
-                                <h4 style="margin:0 0 6px 0; color:#1e293b;">Reset Your Password</h4>
-                                <p style="margin:0 0 12px 0; font-size:0.86rem; color:#475569;">Enter your account email and we will send you a password reset link:</p>
-                                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                    <input type="email" id="mpc_l3_forgot_email" class="mpc-form-control" placeholder="Enter your email address" style="flex:1; min-width:220px;">
-                                    <button type="button" id="mpc-l3-forgot-submit" class="mpc-btn" style="background:#334155; color:#fff; height:44px; padding:0 20px; font-weight:800;">Send Reset Link</button>
+                            <div id="mpc-l3-returning-panel" class="mpc-l3-returning-panel">
+                                <div id="mpc-l3-signin-view">
+                                    <h3 style="margin:0 0 6px 0; color:#1B5E20; font-size:1.12rem;">Welcome Back to The Cycle Bistro</h3>
+                                    <p style="margin:0 0 14px 0; color:#475569; font-size:0.88rem;">Sign in to automatically waive your AED 150 Thermal Bag Deposit and pre-fill your delivery preferences.</p>
+                                    <div class="mpc-inline-auth-grid">
+                                        <input type="email" id="mpc_l3_login_email" class="mpc-form-control" placeholder="Email Address" autocomplete="username">
+                                        <input type="password" id="mpc_l3_login_pwd" class="mpc-form-control" placeholder="Password" autocomplete="current-password">
+                                        <button type="button" id="mpc-l3-login-submit" class="mpc-btn mpc-auth-submit-btn">Sign In &amp; Continue</button>
+                                    </div>
+                                    <div class="mpc-auth-links-row">
+                                        <span id="mpc-l3-login-msg" class="mpc-auth-err-msg"></span>
+                                        <a href="#forgot-l3" id="mpc-l3-show-forgot" class="mpc-auth-link">Forgot Password?</a>
+                                    </div>
                                 </div>
-                                <div class="mpc-auth-links-row">
-                                    <span id="mpc-l3-forgot-msg" style="font-weight:700;"></span>
-                                    <a href="#signin-l3" id="mpc-l3-back-signin" style="color:#1B5E20; font-weight:700; text-decoration:underline;">&larr; Back to Sign In</a>
+
+                                <div id="mpc-l3-forgot-view" style="display:none;">
+                                    <h4 style="margin:0 0 6px 0; color:#1e293b;">Reset Your Password</h4>
+                                    <p class="mpc-auth-help-text">Enter your account email and we will send you a password reset link:</p>
+                                    <div class="mpc-inline-forgot-grid">
+                                        <input type="email" id="mpc_l3_forgot_email" class="mpc-form-control" placeholder="Enter your email address">
+                                        <button type="button" id="mpc-l3-forgot-submit" class="mpc-btn mpc-auth-reset-btn">Send Reset Link</button>
+                                    </div>
+                                    <div class="mpc-auth-links-row">
+                                        <span id="mpc-l3-forgot-msg" style="font-weight:700;"></span>
+                                        <a href="#signin-l3" id="mpc-l3-back-signin" class="mpc-auth-link">&larr; Back to Sign In</a>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                <?php elseif ( $show_l3_tabs && is_user_logged_in() && ! $show_l1_bar ) : ?>
-                    <div class="mpc-top-account-bar is-logged-in" style="margin-bottom:20px;">
-                        <div class="mpc-account-bar-header">
-                            <div class="mpc-account-bar-title">
-                                <span style="color:#1B5E20;">&#10003; <strong>Welcome back, <?php echo esc_html( $saved_user_details['first_name'] ); ?>!</strong></span>
-                                <?php if ( $requires_deposit_init === 'false' ) : ?>
-                                    <span class="mpc-deposit-waived-pill">&#10003; Thermal Bag Deposit Waived</span>
-                                <?php endif; ?>
+                        <?php else : ?>
+                            <!-- Distinct Two-Tab Switcher Even When Logged In -->
+                            <div class="mpc-l3-mode-tabs">
+                                <button type="button" class="mpc-l3-tab-btn active" data-l3-auth-mode="self">
+                                    <span>&#128100; Continue as <?php echo esc_html( $saved_user_details['first_name'] ); ?></span>
+                                </button>
+                                <button type="button" class="mpc-l3-tab-btn" data-l3-auth-mode="different_email">
+                                    <span>&#10024; Subscribe with a Different Email</span>
+                                </button>
                             </div>
-                            <label style="cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:0.86rem; font-weight:700; color:#1B5E20; margin:0;">
-                                <input type="checkbox" id="mpc_use_saved_details" <?php echo $autofill_default ? 'checked' : ''; ?> style="accent-color:#379237; transform:scale(1.15);">
-                                <span>Auto-fill my saved delivery details</span>
-                            </label>
-                        </div>
+                            <?php if ( ! $show_l1_bar ) : ?>
+                                <div class="mpc-top-account-bar is-logged-in" id="mpc-l3-logged-status-bar" style="margin-bottom:18px;">
+                                    <div class="mpc-logged-bar-row-1">
+                                        <span class="mpc-welcome-name">&#10003; Ordering as <strong><?php echo esc_html( $saved_user_details['email'] ); ?></strong></span>
+                                        <?php if ( $requires_deposit_init === 'false' ) : ?>
+                                            <span class="mpc-deposit-waived-pill">&#10003; Bag Deposit Waived</span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="mpc-logged-bar-row-2">
+                                        <label class="mpc-autofill-check-label">
+                                            <input type="checkbox" class="mpc-use-saved-details-cb" <?php echo $autofill_default ? 'checked' : ''; ?>>
+                                            <span>Auto-fill saved details</span>
+                                        </label>
+                                        <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
 
@@ -1349,64 +1618,84 @@ function mpc_render_checkout_wizard() {
                     }
                     ?>
                 </div>
-                
-                <div class="mpc-form-group" id="mpc-coupon-section" style="display: none; border-top: 1px solid #eee; padding-top: 25px; margin-top: 20px;">
-                    <label style="font-weight: 600; color: #334155;">Have a Discount Code?</label>
-                    <div style="display: flex; gap: 10px; align-items: flex-start; margin-top: 8px;">
-                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Enter coupon code" style="text-transform: uppercase; max-width: 280px; letter-spacing: 1px;">
-                        <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn" style="background: #334155; color: #fff; height: 44px; padding: 0 20px; font-size: 0.9em; white-space: nowrap;">Apply Code</button>
-                    </div>
-                    <div id="mpc-coupon-feedback" style="margin-top: 10px; font-size: 0.9em; font-weight: bold;"></div>
-                </div>
 
                 <div class="mpc-nav-buttons">
                     <button class="mpc-btn mpc-btn-next" onclick="mpcChangeStep(1)" id="btn-next-1" disabled>Next: Delivery Details &rarr;</button>
                 </div>
             </div>
 
+            <!-- =========================================================
+                 STEP 2: COMPACT DELIVERY INFORMATION
+                 ========================================================= -->
             <div id="mpc-step-2" class="mpc-step-content">
-                <h2 style="margin-top: 0; color: #222;">Delivery Information</h2>
+                <div class="mpc-step-header-flex">
+                    <h2 style="margin: 0; color: #222;">Delivery Information</h2>
+                    <span class="mpc-location-pill">&#128205; Dubai, UAE</span>
+                </div>
 
                 <?php if ( $show_step2_login ) : ?>
-                    <?php if ( ! is_user_logged_in() ) : ?>
-                        <div id="mpc-login-section" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 25px;">
-                            <p style="margin: 0;"><strong>Already a customer?</strong> <a href="#" id="mpc-show-login" style="color: #379237; text-decoration: underline;">Click here to log in</a></p>
-                            <div id="mpc-login-form" style="display: none; margin-top: 15px;">
-                                <div class="mpc-form-row">
-                                    <div class="mpc-form-col"><input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address"></div>
-                                    <div class="mpc-form-col"><input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password"></div>
+                    <div id="mpc-step2-account-wrap" class="mpc-top-account-bar <?php echo is_user_logged_in() ? 'is-logged-in' : ''; ?>" style="margin-top:12px;">
+                        <?php if ( ! is_user_logged_in() ) : ?>
+                            <div class="mpc-account-bar-header">
+                                <div class="mpc-account-bar-title">
+                                    <span>&#128100; <strong>Already a subscriber?</strong></span>
+                                    <span class="mpc-account-bar-sub">Sign in to waive your bag deposit &amp; auto-fill details.</span>
                                 </div>
-                                <button type="button" id="mpc-do-login-btn" class="mpc-btn" style="background: #334155; color: #fff; margin-top: 15px; height: 40px; padding: 0 20px; font-size: 0.9em;">Secure Log In</button>
-                                <span id="mpc-login-msg" style="color: #e11d48; margin-left: 15px; font-size: 0.9em; font-weight: bold;"></span>
+                                <button type="button" id="mpc-show-login" class="mpc-account-toggle-btn">Sign In &#9662;</button>
                             </div>
-                        </div>
-                    <?php else : ?>
-                        <div id="mpc-logged-in-section" style="background: #f4fdf4; padding: 20px; border-radius: 8px; border: 1px solid #379237; margin-bottom: 25px;">
-                            <p style="margin: 0 0 10px 0; color: #222;"><strong>Welcome back, <?php echo esc_html( $saved_user_details['first_name'] ); ?>!</strong></p>
-                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: normal;">
-                                <input type="checkbox" id="mpc_use_saved_details" <?php echo $autofill_default ? 'checked' : ''; ?> style="transform: scale(1.2);"> Use my saved delivery details (you can customize delivery timing or allergies for this specific plan)
-                            </label>
-                        </div>
-                    <?php endif; ?>
+                            <div id="mpc-login-form" class="mpc-inline-auth-drawer">
+                                <div class="mpc-inline-auth-grid">
+                                    <input type="email" id="mpc_login_email" class="mpc-form-control" placeholder="Email Address">
+                                    <input type="password" id="mpc_login_pwd" class="mpc-form-control" placeholder="Password">
+                                    <button type="button" id="mpc-do-login-btn" class="mpc-btn mpc-auth-submit-btn">Sign In</button>
+                                </div>
+                                <div class="mpc-auth-links-row">
+                                    <span id="mpc-login-msg" class="mpc-auth-err-msg"></span>
+                                </div>
+                            </div>
+                        <?php else : ?>
+                            <div class="mpc-logged-bar-row-1">
+                                <span class="mpc-welcome-name">&#10003; Welcome back, <strong><?php echo esc_html( $saved_user_details['first_name'] ); ?></strong>!</span>
+                                <?php if ( $requires_deposit_init === 'false' ) : ?>
+                                    <span class="mpc-deposit-waived-pill">&#10003; Bag Deposit Waived</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="mpc-logged-bar-row-2">
+                                <label class="mpc-autofill-check-label">
+                                    <input type="checkbox" class="mpc-use-saved-details-cb" <?php echo $autofill_default ? 'checked' : ''; ?>>
+                                    <span>Auto-fill saved details</span>
+                                </label>
+                                <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
+                            </div>
+                        <?php endif; ?>
+                    </div>
                 <?php endif; ?>
 
-                <div class="mpc-form-row">
+                <div class="mpc-form-row mpc-two-col-mobile">
                     <div class="mpc-form-col mpc-form-group">
                         <label>First Name *</label>
-                        <input type="text" class="mpc-form-control" id="mpc_first_name" placeholder="Enter Your First Name" required>
+                        <input type="text" class="mpc-form-control" id="mpc_first_name" placeholder="First Name" required>
                     </div>
                     <div class="mpc-form-col mpc-form-group">
                         <label>Last Name *</label>
-                        <input type="text" class="mpc-form-control" id="mpc_last_name" placeholder="Enter Your Last Name" required>
+                        <input type="text" class="mpc-form-control" id="mpc_last_name" placeholder="Last Name" required>
                     </div>
                 </div>
 
                 <div class="mpc-form-row">
                     <div class="mpc-form-col mpc-form-group">
-                        <label>Email Address *</label>
-                        <input type="email" class="mpc-form-control" id="mpc_email" placeholder="john@example.com" required <?php if ( is_user_logged_in() ) echo 'readonly style="background: #f1f5f9; cursor: not-allowed;"'; ?>>
+                        <div class="mpc-label-with-action">
+                            <label style="margin:0;">Email Address *</label>
+                            <?php if ( is_user_logged_in() ) : ?>
+                                <button type="button" id="mpc-inline-email-toggle" class="mpc-diff-email-trigger mpc-inline-email-btn">&#9998; Use a different email</button>
+                            <?php endif; ?>
+                        </div>
+                        <input type="email" class="mpc-form-control" id="mpc_email" placeholder="name@example.com" required <?php if ( is_user_logged_in() ) echo 'readonly style="background: #f1f5f9; cursor: not-allowed;"'; ?>>
                         <div id="mpc-email-exists-hint" class="mpc-email-exists-hint">
                             &#128100; An account with this email already exists. <a href="#signin" id="mpc-email-hint-trigger" style="color:#1B5E20; font-weight:800; text-decoration:underline;">Click here to sign in</a> and waive your bag deposit.
+                        </div>
+                        <div id="mpc-different-email-notice" class="mpc-different-email-notice" style="display:none;">
+                            &#10024; Creating a plan for a different email address. <a href="#restore-self" id="mpc-restore-account-email" style="color:#1B5E20; font-weight:800; text-decoration:underline;">Use my account (<?php echo is_user_logged_in() ? esc_html( $saved_user_details['email'] ) : ''; ?>)</a>
                         </div>
                     </div>
                     <div class="mpc-form-col mpc-form-group">
@@ -1419,7 +1708,7 @@ function mpc_render_checkout_wizard() {
                     <div class="mpc-form-col mpc-form-group">
                         <label>Create Account Password *</label>
                         <div style="position: relative; display: flex; align-items: center; width: 100%;">
-                            <input type="password" class="mpc-form-control" id="mpc_password" placeholder="Required for Account Creation" style="padding-right: 45px; width: 100%;">
+                            <input type="password" class="mpc-form-control" id="mpc_password" placeholder="Required for new account access" style="padding-right: 45px; width: 100%;">
                             <span id="mpc_toggle_password" style="position: absolute; right: 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; height: 100%; z-index: 50;">
                                 <svg id="icon-eye-open" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                                 <svg id="icon-eye-closed" style="display:none;" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
@@ -1428,73 +1717,56 @@ function mpc_render_checkout_wizard() {
                     </div>
                 </div>
 
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
-
                 <div class="mpc-form-row">
-                    <div class="mpc-form-col mpc-form-group">
-                        <label>Address Line 1 *</label>
-                        <input type="text" class="mpc-form-control" id="mpc_address_1" placeholder="House number and street name" required>
+                    <div class="mpc-form-col mpc-form-group" style="flex: 1.4;">
+                        <label>Street / Building / Villa Address *</label>
+                        <input type="text" class="mpc-form-control" id="mpc_address_1" placeholder="Building name, street, area in Dubai" required>
                     </div>
-                    <div class="mpc-form-col mpc-form-group">
-                        <label>Address Line 2 (Optional)</label>
-                        <input type="text" class="mpc-form-control" id="mpc_address_2" placeholder="Apartment, suite, unit, etc.">
+                    <div class="mpc-form-col mpc-form-group" style="flex: 1;">
+                        <label>Apt / Villa / Floor (Optional)</label>
+                        <input type="text" class="mpc-form-control" id="mpc_address_2" placeholder="Apartment, villa no., floor, etc.">
                     </div>
                 </div>
 
-                <div class="mpc-form-row">
-                    <div class="mpc-form-col mpc-form-group" style="flex: unset; width: 100%;">
-                        <label>City &amp; Country</label>
-                        <input type="text" class="mpc-form-control" value="Dubai, UAE" disabled style="background: #f8fafc; color: #94a3b8; cursor: not-allowed;">
-                    </div>
-                </div>
-
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
-
-                <div class="mpc-form-row">
-                    <div class="mpc-form-col mpc-form-group">
-                        <label>Delivery Method *</label>
-                        <select class="mpc-form-control" id="mpc_delivery_method">
-                            <option value="Delivery">Home/Office Delivery</option>
-                            <option value="Pickup">Store Pick-up</option>
-                        </select>
-                    </div>
-                    <div class="mpc-form-col mpc-form-group">
-                        <label>Receive by *</label>
-                        <select class="mpc-form-control" id="mpc_delivery_timing">
-                            <option value="Deliver Day Before">Deliver Day Before</option>
-                            <option value="Deliver Same Day">Deliver Same Day</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="mpc-form-row" id="mpc_dynamic_logistics_row" style="margin-bottom: 20px;">
-                    <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
-                        <div id="mpc_delivery_zone_container" class="mpc-logistics-box" style="margin-top: 0;">
-                            <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-weight: normal; margin: 0; line-height: 1.4;">
-                                <input type="checkbox" id="mpc_delivery_zone_check" style="transform: scale(1.3); margin-top: 2px;">
-                                <span>I confirm I am within the delivery zone. (<a href="<?php echo esc_url( $map_url ); ?>" target="_blank" style="color: #379237; text-decoration: underline;">View Map</a>) *</span>
-                            </label>
+                <div class="mpc-logistics-card-group">
+                    <div class="mpc-form-row mpc-two-col-mobile" style="margin-bottom: 12px;">
+                        <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
+                            <label>Delivery Method *</label>
+                            <select class="mpc-form-control" id="mpc_delivery_method">
+                                <option value="Delivery">Home/Office Delivery</option>
+                                <option value="Pickup">Store Pick-up</option>
+                            </select>
                         </div>
-                        <div id="mpc_pickup_branch_container" class="mpc-logistics-box" style="display: none; margin-top: 0; padding-bottom: 5px;">
-                            <label style="margin-bottom: 5px;">Select Pickup Branch *</label>
-                            <select class="mpc-form-control" id="mpc_pickup_branch">
-                                <option value="">- Select Branch -</option>
-                                <option value="Jumeirah">Jumeirah</option>
-                                <option value="Motor City">Motor City</option>
+                        <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
+                            <label>Receive by *</label>
+                            <select class="mpc-form-control" id="mpc_delivery_timing">
+                                <option value="Deliver Day Before">Deliver Day Before</option>
+                                <option value="Deliver Same Day">Deliver Same Day</option>
                             </select>
                         </div>
                     </div>
-                    <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
-                        <label>Delivery/Pickup Timing *</label>
-                        <select class="mpc-form-control" id="mpc_time_slot">
-                            <?php
-                            for ( $i = 5; $i < 20; $i++ ) {
-                                $start_time = date( 'g:i A', strtotime( "$i:00" ) );
-                                $end_time   = date( 'g:i A', strtotime( ( $i + 1 ) . ':00' ) );
-                                echo '<option value="' . esc_attr( $start_time . ' to ' . $end_time ) . '">' . esc_html( $start_time . ' to ' . $end_time ) . '</option>';
-                            }
-                            ?>
-                        </select>
+
+                    <div class="mpc-form-row" id="mpc_dynamic_logistics_row" style="margin-bottom: 0;">
+                        <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
+                            <label>Delivery / Pickup Time Slot *</label>
+                            <select class="mpc-form-control" id="mpc_time_slot"></select>
+                        </div>
+                        <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
+                            <div id="mpc_delivery_zone_container" class="mpc-logistics-box" style="margin-top: 23px;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; margin: 0; line-height: 1.35; font-size: 0.88rem;">
+                                    <input type="checkbox" id="mpc_delivery_zone_check" style="transform: scale(1.25); accent-color: #379237;">
+                                    <span>I confirm I am within the delivery zone (<a href="<?php echo esc_url( $map_url ); ?>" target="_blank" style="color: #379237; text-decoration: underline;">View Map</a>) *</span>
+                                </label>
+                            </div>
+                            <div id="mpc_pickup_branch_container" style="display: none;">
+                                <label>Select Pickup Branch *</label>
+                                <select class="mpc-form-control" id="mpc_pickup_branch">
+                                    <option value="">- Select Branch -</option>
+                                    <option value="Jumeirah">Jumeirah</option>
+                                    <option value="Motor City">Motor City</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1504,11 +1776,13 @@ function mpc_render_checkout_wizard() {
                 </div>
             </div>
 
+            <!-- =========================================================
+                 STEP 3: DIETARY INFO & RECIPIENT
+                 ========================================================= -->
             <div id="mpc-step-3" class="mpc-step-content">
                 <h2 style="margin-top: 0; color: #222;">Dietary Info &amp; Recipient</h2>
                 <p id="mpc-meals-subtitle" style="color: #666; font-weight: bold;">Who is this plan for, and do they have any food allergies?</p>
 
-                <!-- RECIPIENT FIELD FOR CUSTOM CHECKOUT -->
                 <div class="mpc-form-group" style="margin-bottom: 20px;">
                     <label style="font-weight:bold; color: #334155; margin-bottom: 5px; display: block;">
                         Recipient Name (Optional)
@@ -1529,14 +1803,32 @@ function mpc_render_checkout_wizard() {
             </div>
         </div>
 
-        <div class="mpc-summary-area">
+        <!-- =========================================================
+             PLAN SUMMARY AREA (WITH PERSISTENT COUPON CODE & STEP 1 NEXT CTA)
+             ========================================================= -->
+        <div class="mpc-summary-area" id="mpc-summary-card">
             <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
             <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
 
-            <div id="mpc-summary-logistics" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.9em;">
+            <!-- Persistent Coupon Code Box inside Summary Card (Visible Across Steps 1, 2 & 3) -->
+            <div id="mpc-coupon-section" class="mpc-summary-coupon-box" style="display: none;">
+                <label class="mpc-summary-coupon-label">&#127903;&#65039; Have a Discount Code?</label>
+                <div class="mpc-summary-coupon-row">
+                    <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Promo code" style="text-transform: uppercase;">
+                    <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn mpc-summary-apply-btn">Apply</button>
+                </div>
+                <div id="mpc-coupon-feedback" style="margin-top: 6px; font-size: 0.84em; font-weight: 700;"></div>
+            </div>
+
+            <div id="mpc-summary-logistics" style="display: none; margin-top: 14px; padding-top: 12px; border-top: 1px dashed #ddd; font-size: 0.9em; line-height: 1.45;">
                 <strong>Method:</strong> <span id="sum-method"></span><br>
                 <strong>Receive By:</strong> <span id="sum-timing"></span>
             </div>
+
+            <!-- Mobile / Summary Direct Next Step Button on Step 1 -->
+            <button type="button" id="btn-summary-next-1" class="mpc-btn mpc-btn-next mpc-summary-next-btn" onclick="mpcChangeStep(1)" style="display: none;">
+                Next: Delivery Details &rarr;
+            </button>
         </div>
     </div>
 
@@ -1545,12 +1837,18 @@ function mpc_render_checkout_wizard() {
         let totalSteps   = 3;
         let checkoutData = { productId: null, planName: '', planPrice: 0, isJuice: false, allowedMeals: 0 };
         
-        let isUserLoggedIn    = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
-        let requiresDeposit   = <?php echo $requires_deposit_init; ?>;
-        let userDepositStatus = '<?php echo esc_js( $deposit_meta_init ); ?>';
-        let activeVipToken    = '';
-        let autoFillOnLogin   = <?php echo $autofill_default ? 'true' : 'false'; ?>;
-        let emailGuardEnabled = <?php echo $email_guard_on ? 'true' : 'false'; ?>;
+        let isUserLoggedIn        = <?php echo is_user_logged_in() ? 'true' : 'false'; ?>;
+        let usingDifferentEmail   = false;
+        let origRequiresDeposit   = <?php echo $requires_deposit_init; ?>;
+        let requiresDeposit       = <?php echo $requires_deposit_init; ?>;
+        let origUserDepositStatus = '<?php echo esc_js( $deposit_meta_init ); ?>';
+        let userDepositStatus     = '<?php echo esc_js( $deposit_meta_init ); ?>';
+        let activeVipToken        = '';
+        let autoFillOnLogin       = <?php echo $autofill_default ? 'true' : 'false'; ?>;
+        let emailGuardEnabled     = <?php echo $email_guard_on ? 'true' : 'false'; ?>;
+
+        // Configured Time Slots from WP Admin > Meal Portal > Checkout Settings
+        const mpcSlotConfig = <?php echo wp_json_encode( $slot_config ); ?>;
         
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
@@ -1598,7 +1896,7 @@ function mpc_render_checkout_wizard() {
             }
         });
 
-        // LIVE VIP TOKEN VALIDATION (Bypasses Page Cache)
+        // LIVE VIP TOKEN VALIDATION
         const urlParams = new URLSearchParams(window.location.search);
         const urlToken  = urlParams.get('vip_token');
 
@@ -1624,9 +1922,15 @@ function mpc_render_checkout_wizard() {
 
         // ---- NATIVE MATH SUMMARY UI ----
         function mpcRenderSummary() {
+            let sumBtn = document.getElementById('btn-summary-next-1');
             if (!checkoutData.planPrice) {
                 document.getElementById('mpc-summary-content').innerHTML = '<p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p>';
+                if (sumBtn) sumBtn.style.display = 'none';
                 return;
+            }
+
+            if (sumBtn) {
+                sumBtn.style.display = (currentStep === 1) ? 'block' : 'none';
             }
 
             let basePrice = parseFloat(checkoutData.planPrice);
@@ -1647,29 +1951,29 @@ function mpc_render_checkout_wizard() {
             let depositAmt = (requiresDeposit && !is100PercentFree) ? 150 : 0;
             let newTotal = discountedPrice + depositAmt;
 
-            let html = `<div style="margin-bottom: 15px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.1em;">${checkoutData.planName}</span></div>`;
-            html += `<div style="padding-top: 15px; border-top: 1px dashed #ddd; font-size: 0.95em;">`;
+            let html = `<div style="margin-bottom: 12px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.08em; font-weight: 700;">${checkoutData.planName}</span></div>`;
+            html += `<div style="padding-top: 12px; border-top: 1px dashed #ddd; font-size: 0.94em;">`;
 
             html += `<div style="display:flex; justify-content:space-between; margin-bottom: 5px;"><span>Plan Price:</span> <strong>AED ${basePrice.toFixed(2)}</strong></div>`;
 
             if (discountAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 5px; color: #16a34a;"><span>Discount (${appliedCoupon.label}):</span> <strong>- AED ${discountAmt.toFixed(2)}</strong></div>`;
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 5px; border-bottom: 1px solid #eee; padding-bottom: 5px;"><span>Discounted Price:</span> <strong>AED ${discountedPrice.toFixed(2)}</strong></div>`;
-                html += `<div style="text-align: right; margin-bottom: 10px;"><a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.85em; text-decoration: underline;">Remove Coupon</a></div>`;
+                html += `<div style="text-align: right; margin-bottom: 8px;"><a href="#" id="mpc-remove-coupon" style="color: #dc2626; font-size: 0.84em; font-weight: 700; text-decoration: underline;">Remove Coupon</a></div>`;
             }
 
             if (depositAmt > 0) {
                 html += `<div style="display:flex; justify-content:space-between; margin-bottom: 2px; color: #b45309;"><span>Thermal Bag Deposit:</span> <strong>+ AED ${depositAmt.toFixed(2)}</strong></div>`;
-                html += `<div style="font-size: 0.8em; color: #b45309; margin-bottom: 10px; text-align: right; opacity: 0.9;">Only applicable for new subscribers. Sign in above if you are an existing customer.</div>`;
+                html += `<div style="font-size: 0.78em; color: #b45309; margin-bottom: 8px; text-align: right; opacity: 0.9;">Refundable deposit for new subscribers.</div>`;
             } else if (activeVipToken !== '' || userDepositStatus === 'own_bag') {
-                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #8b5cf6;"><span>Thermal Bag Deposit:</span> <strong>Waived (Customer's Own Bag)</strong></div>`;
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 8px; color: #8b5cf6;"><span>Thermal Bag Deposit:</span> <strong>Waived (Customer's Own Bag)</strong></div>`;
             } else if (!requiresDeposit && !is100PercentFree) {
-                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (Account Held)</strong></div>`;
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 8px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (Account Held)</strong></div>`;
             } else if (requiresDeposit && is100PercentFree) {
-                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 10px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (100% Free)</strong></div>`;
+                html += `<div style="display:flex; justify-content:space-between; margin-bottom: 8px; color: #16a34a;"><span>Thermal Bag Deposit:</span> <strong>Waived (100% Free)</strong></div>`;
             }
 
-            html += `<div style="display:flex; justify-content:space-between; border-top: 2px solid #222; padding-top: 10px; margin-top: 5px; font-size: 1.2em;"><span><strong>New Total:</strong></span> <strong style="color: #222;">AED ${newTotal.toFixed(2)}</strong></div>`;
+            html += `<div style="display:flex; justify-content:space-between; border-top: 2px solid #222; padding-top: 10px; margin-top: 5px; font-size: 1.18em;"><span><strong>New Total:</strong></span> <strong style="color: #222;">AED ${newTotal.toFixed(2)}</strong></div>`;
             html += `</div>`;
 
             document.getElementById('mpc-summary-content').innerHTML = html;
@@ -1702,7 +2006,7 @@ function mpc_render_checkout_wizard() {
             
             let userEmail = document.getElementById('mpc_email').value;
 
-            this.innerText = 'Checking...'; this.disabled = true; feedback.innerText = '';
+            this.innerText = '...'; this.disabled = true; feedback.innerText = '';
             
             let formData = new URLSearchParams();
             formData.append('action', 'mpc_validate_coupon');
@@ -1732,13 +2036,13 @@ function mpc_render_checkout_wizard() {
                     feedback.style.color = '#dc2626';
                     feedback.innerText   = '\u2717 ' + response.data;
                 }
-                document.getElementById('mpc-apply-coupon-btn').innerText = 'Apply Code';
+                document.getElementById('mpc-apply-coupon-btn').innerText = 'Apply';
                 document.getElementById('mpc-apply-coupon-btn').disabled  = false;
             })
             .catch(() => {
                 feedback.style.color = '#dc2626';
                 feedback.innerText   = 'Connection error. Please try again.';
-                document.getElementById('mpc-apply-coupon-btn').innerText = 'Apply Code';
+                document.getElementById('mpc-apply-coupon-btn').innerText = 'Apply';
                 document.getElementById('mpc-apply-coupon-btn').disabled  = false;
             });
         });
@@ -1758,14 +2062,56 @@ function mpc_render_checkout_wizard() {
             });
         }
 
+        // ---- DYNAMIC TIME SLOT BUILDER (SYNCED WITH CHECKOUT SETTINGS) ----
+        function mpcAdjustTimingOptions() {
+            const method         = document.getElementById('mpc_delivery_method').value;
+            const timing         = document.getElementById('mpc_delivery_timing').value;
+            const timeSlotSelect = document.getElementById('mpc_time_slot');
+            if (!timeSlotSelect) return;
+
+            const previousVal = timeSlotSelect.value;
+            const isSameDay   = (timing && timing.toLowerCase().indexOf('same day') !== -1);
+            const rawSlots    = isSameDay ? (mpcSlotConfig.same_day || []) : (mpcSlotConfig.day_before || []);
+            const hideEarlyAm = (method === 'Pickup' && mpcSlotConfig.pickup_hide_early_am);
+
+            timeSlotSelect.innerHTML = '';
+            let matchFound = false;
+
+            rawSlots.forEach(function(slotStr) {
+                const isEarlySlot = /^(5|6|7):00 AM/i.test(slotStr);
+                if (hideEarlyAm && isEarlySlot) {
+                    return;
+                }
+                const opt = document.createElement('option');
+                opt.value = slotStr;
+                opt.textContent = slotStr;
+                if (slotStr === previousVal) {
+                    opt.selected = true;
+                    matchFound = true;
+                }
+                timeSlotSelect.appendChild(opt);
+            });
+
+            if (timeSlotSelect.options.length === 0) {
+                const fallbackOpt = document.createElement('option');
+                fallbackOpt.value = isSameDay ? '8:00 AM to 9:00 AM' : '5:00 PM to 8:00 PM';
+                fallbackOpt.textContent = fallbackOpt.value;
+                timeSlotSelect.appendChild(fallbackOpt);
+            } else if (!matchFound) {
+                timeSlotSelect.selectedIndex = 0;
+            }
+        }
+
         function populateFields(data) {
             if (!data) return;
             if (data.first_name) document.getElementById('mpc_first_name').value = data.first_name;
             if (data.last_name)  document.getElementById('mpc_last_name').value  = data.last_name;
-            if (data.email) {
+            if (data.email && !usingDifferentEmail) {
                 let ef = document.getElementById('mpc_email');
-                ef.value = data.email; ef.readOnly = true;
-                ef.style.background = '#f1f5f9'; ef.style.cursor = 'not-allowed';
+                ef.value = data.email;
+                ef.readOnly = true;
+                ef.style.background = '#f1f5f9';
+                ef.style.cursor = 'not-allowed';
                 let hintEl = document.getElementById('mpc-email-exists-hint');
                 if (hintEl) hintEl.style.display = 'none';
             }
@@ -1774,13 +2120,22 @@ function mpc_render_checkout_wizard() {
             if (data.address_2) document.getElementById('mpc_address_2').value = data.address_2;
             if (data.delivery_method) {
                 document.getElementById('mpc_delivery_method').value = data.delivery_method;
-                document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
             }
-            if (data.delivery_timing) document.getElementById('mpc_delivery_timing').value = data.delivery_timing;
-            if (data.time_slot)       document.getElementById('mpc_time_slot').value       = data.time_slot;
+            if (data.delivery_timing) {
+                document.getElementById('mpc_delivery_timing').value = data.delivery_timing;
+            }
+            mpcAdjustTimingOptions();
+            if (data.time_slot) {
+                let tsSelect = document.getElementById('mpc_time_slot');
+                let exists = Array.from(tsSelect.options).some(o => o.value === data.time_slot);
+                if (exists) {
+                    tsSelect.value = data.time_slot;
+                }
+            }
             if (data.pickup_location && data.delivery_method === 'Pickup') {
                 document.getElementById('mpc_pickup_branch').value = data.pickup_location;
             }
+            document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
             if (typeof data.allergies !== 'undefined' && data.allergies !== null) {
                 document.getElementById('mpc_allergies').value = data.allergies;
             }
@@ -1788,11 +2143,95 @@ function mpc_render_checkout_wizard() {
             updateLogisticsSummary();
         }
 
-        // Unified Post-Login UI Updater (Works for Option L1, Option L3, and Step 2 Login)
+        // ---- INLINE "USE A DIFFERENT EMAIL" TOGGLE (OPTION EM-1) ----
+        function enableDifferentEmailMode() {
+            usingDifferentEmail = true;
+            let ef = document.getElementById('mpc_email');
+            if (ef) {
+                ef.readOnly = false;
+                ef.style.background = '#ffffff';
+                ef.style.cursor = 'text';
+                ef.value = '';
+                ef.placeholder = 'Enter new subscriber email address';
+            }
+            let pwdGroup = document.getElementById('mpc_password_group');
+            if (pwdGroup) pwdGroup.style.display = 'flex';
+
+            let diffNotice = document.getElementById('mpc-different-email-notice');
+            if (diffNotice) diffNotice.style.display = 'block';
+
+            let inlineBtn = document.getElementById('mpc-inline-email-toggle');
+            if (inlineBtn) inlineBtn.style.display = 'none';
+
+            document.querySelectorAll('.mpc-use-saved-details-cb').forEach(cb => { cb.checked = false; });
+
+            requiresDeposit = (activeVipToken !== '') ? false : true;
+            userDepositStatus = '';
+            mpcRenderSummary();
+
+            if (currentStep === 1) {
+                mpcShowNotice('Switched to new email mode. Select a plan to continue to Step 2.', 'success');
+            } else if (ef) {
+                ef.focus();
+            }
+        }
+
+        function restoreLoggedInAccountEmailMode() {
+            usingDifferentEmail = false;
+            requiresDeposit     = (activeVipToken !== '') ? false : origRequiresDeposit;
+            userDepositStatus   = origUserDepositStatus;
+
+            let pwdGroup = document.getElementById('mpc_password_group');
+            if (pwdGroup) pwdGroup.style.display = 'none';
+
+            let diffNotice = document.getElementById('mpc-different-email-notice');
+            if (diffNotice) diffNotice.style.display = 'none';
+
+            let inlineBtn = document.getElementById('mpc-inline-email-toggle');
+            if (inlineBtn) inlineBtn.style.display = 'inline-flex';
+
+            document.querySelectorAll('.mpc-l3-tab-btn[data-l3-auth-mode]').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-l3-auth-mode') === 'self');
+            });
+
+            if (typeof mpcSavedDetails !== 'undefined') {
+                document.querySelectorAll('.mpc-use-saved-details-cb').forEach(cb => { cb.checked = true; });
+                populateFields(mpcSavedDetails);
+            }
+            mpcRenderSummary();
+        }
+
+        document.addEventListener('click', function(e) {
+            if (e.target.closest('.mpc-diff-email-trigger')) {
+                e.preventDefault();
+                enableDifferentEmailMode();
+            }
+            if (e.target.closest('#mpc-restore-account-email')) {
+                e.preventDefault();
+                restoreLoggedInAccountEmailMode();
+            }
+        });
+
+        document.querySelectorAll('.mpc-l3-tab-btn[data-l3-auth-mode]').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.mpc-l3-tab-btn[data-l3-auth-mode]').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                if (this.getAttribute('data-l3-auth-mode') === 'different_email') {
+                    enableDifferentEmailMode();
+                } else {
+                    restoreLoggedInAccountEmailMode();
+                }
+            });
+        });
+
+        // Unified Post-Login UI Updater
         function handleSuccessfulAjaxLogin(userData) {
-            isUserLoggedIn    = true;
-            requiresDeposit   = userData.requires_deposit;
-            userDepositStatus = userData.deposit_status;
+            isUserLoggedIn        = true;
+            usingDifferentEmail   = false;
+            origRequiresDeposit   = userData.requires_deposit;
+            requiresDeposit       = (activeVipToken !== '') ? false : userData.requires_deposit;
+            origUserDepositStatus = userData.deposit_status;
+            userDepositStatus     = userData.deposit_status;
             window.mpcSavedDetails = userData;
 
             if (userData.new_nonce) {
@@ -1805,7 +2244,6 @@ function mpc_render_checkout_wizard() {
             let hintEl = document.getElementById('mpc-email-exists-hint');
             if (hintEl) hintEl.style.display = 'none';
 
-            // Always lock verified account email
             if (userData.email) {
                 let ef = document.getElementById('mpc_email');
                 ef.value = userData.email;
@@ -1815,20 +2253,21 @@ function mpc_render_checkout_wizard() {
             }
 
             let depositBadgeHtml = (!requiresDeposit)
-                ? '<span class="mpc-deposit-waived-pill">&#10003; Thermal Bag Deposit Waived</span>'
+                ? '<span class="mpc-deposit-waived-pill">&#10003; Bag Deposit Waived</span>'
                 : '';
 
             let checkedAttr = autoFillOnLogin ? 'checked' : '';
             let barHtml = `
-                <div class="mpc-account-bar-header">
-                    <div class="mpc-account-bar-title">
-                        <span style="color:#1B5E20;">&#10003; <strong>Welcome back, ${userData.first_name}!</strong></span>
-                        ${depositBadgeHtml}
-                    </div>
-                    <label style="cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:0.86rem; font-weight:700; color:#1B5E20; margin:0;">
-                        <input type="checkbox" id="mpc_use_saved_details_dynamic" ${checkedAttr} style="accent-color:#379237; transform:scale(1.15);">
-                        <span>Auto-fill my saved delivery details</span>
+                <div class="mpc-logged-bar-row-1">
+                    <span class="mpc-welcome-name">&#10003; Welcome back, <strong>${userData.first_name}</strong>!</span>
+                    ${depositBadgeHtml}
+                </div>
+                <div class="mpc-logged-bar-row-2">
+                    <label class="mpc-autofill-check-label">
+                        <input type="checkbox" class="mpc-use-saved-details-cb" ${checkedAttr}>
+                        <span>Auto-fill saved details</span>
                     </label>
+                    <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
                 </div>`;
 
             let topBar = document.getElementById('mpc-top-account-bar');
@@ -1841,23 +2280,20 @@ function mpc_render_checkout_wizard() {
             if (l3Wrap) {
                 let plansCont = document.getElementById('mpc-step-1-plans-container');
                 if (plansCont) plansCont.style.display = 'block';
-                if (!topBar) {
-                    l3Wrap.innerHTML = `<div class="mpc-top-account-bar is-logged-in" style="margin-bottom:20px;">${barHtml}</div>`;
-                } else {
-                    l3Wrap.style.display = 'none';
-                }
+                l3Wrap.innerHTML = `<div class="mpc-top-account-bar is-logged-in" style="margin-bottom:18px;">${barHtml}</div>`;
             }
 
-            let step2LoginSec = document.getElementById('mpc-login-section');
+            let step2LoginSec = document.getElementById('mpc-step2-account-wrap');
             if (step2LoginSec) {
-                step2LoginSec.innerHTML = `<div style="background:#f4fdf4; padding:16px 20px; border-radius:8px; border:1px solid #379237;">${barHtml}</div>`;
+                step2LoginSec.classList.add('is-logged-in');
+                step2LoginSec.innerHTML = barHtml;
             }
 
             if (autoFillOnLogin) {
                 populateFields(userData);
             }
 
-            document.querySelectorAll('#mpc_use_saved_details_dynamic').forEach(chk => {
+            document.querySelectorAll('.mpc-use-saved-details-cb').forEach(chk => {
                 chk.addEventListener('change', function() {
                     if (this.checked) populateFields(userData);
                 });
@@ -1940,7 +2376,7 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Bind Option L1 Top Account Bar Controls
+        // Bind Top Account Bar Controls
         let topToggleBtn = document.getElementById('mpc-top-login-toggle');
         if (topToggleBtn) {
             topToggleBtn.addEventListener('click', function(e) {
@@ -1993,12 +2429,12 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Bind Option L3 Two-Tab Mode Switcher Controls
-        document.querySelectorAll('.mpc-l3-tab-btn').forEach(btn => {
+        // Bind Step 1 Customer Type Tabs Controls
+        document.querySelectorAll('.mpc-l3-tab-btn[data-l3-tab]').forEach(btn => {
             btn.addEventListener('click', function() {
-                document.querySelectorAll('.mpc-l3-tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.mpc-l3-tab-btn[data-l3-tab]').forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
-                let mode = this.getAttribute('data-l3-tab');
+                let mode      = this.getAttribute('data-l3-tab');
                 let retPanel  = document.getElementById('mpc-l3-returning-panel');
                 let plansCont = document.getElementById('mpc-step-1-plans-container');
                 if (mode === 'returning') {
@@ -2047,13 +2483,13 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Bind Legacy Step 2 Login Controls
+        // Bind Step 2 Login Controls
         let showLogin = document.getElementById('mpc-show-login');
         if (showLogin) {
             showLogin.addEventListener('click', function(e) {
                 e.preventDefault();
-                document.getElementById('mpc-login-form').style.display = 'block';
-                this.style.display = 'none';
+                let formEl = document.getElementById('mpc-login-form');
+                formEl.style.display = (formEl.style.display === 'block') ? 'none' : 'block';
             });
         }
 
@@ -2064,20 +2500,19 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        let useSavedCheckbox = document.getElementById('mpc_use_saved_details');
-        if (useSavedCheckbox) {
-            useSavedCheckbox.addEventListener('change', function() {
+        document.querySelectorAll('.mpc-use-saved-details-cb').forEach(chk => {
+            chk.addEventListener('change', function() {
                 if (this.checked && typeof mpcSavedDetails !== 'undefined') {
-                    populateFields(mpcSavedDetails);
+                    restoreLoggedInAccountEmailMode();
                 }
             });
-        }
+        });
 
         // Smart Existing-Email Detector on Step 2
         let step2EmailInput = document.getElementById('mpc_email');
         if (step2EmailInput && emailGuardEnabled) {
             step2EmailInput.addEventListener('blur', function() {
-                if (isUserLoggedIn) return;
+                if (isUserLoggedIn && !usingDifferentEmail) return;
                 let typedEmail = this.value.trim();
                 let hintBox    = document.getElementById('mpc-email-exists-hint');
                 if (!typedEmail || typedEmail.indexOf('@') === -1) {
@@ -2090,8 +2525,18 @@ function mpc_render_checkout_wizard() {
                 fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', { method: 'POST', body: fd })
                 .then(res => res.json())
                 .then(response => {
-                    if (response.success && response.data.exists && !isUserLoggedIn) {
-                        if (hintBox) hintBox.style.display = 'block';
+                    if (response.success && response.data.same_as_current) {
+                        restoreLoggedInAccountEmailMode();
+                        return;
+                    }
+                    if (response.success && response.data.exists) {
+                        if (response.data.is_staff) {
+                            requiresDeposit = (activeVipToken !== '') ? false : response.data.requires_deposit;
+                            document.getElementById('mpc_password_group').style.display = 'none';
+                            mpcRenderSummary();
+                        } else if (hintBox) {
+                            hintBox.style.display = 'block';
+                        }
                     } else if (hintBox) {
                         hintBox.style.display = 'none';
                     }
@@ -2116,7 +2561,6 @@ function mpc_render_checkout_wizard() {
                     }, 350);
                 } else if (document.getElementById('mpc-login-form')) {
                     document.getElementById('mpc-login-form').style.display = 'block';
-                    if (document.getElementById('mpc-show-login')) document.getElementById('mpc-show-login').style.display = 'none';
                     if (typedEmail) document.getElementById('mpc_login_email').value = typedEmail;
                     document.getElementById('mpc_login_pwd').focus();
                 } else {
@@ -2154,6 +2598,7 @@ function mpc_render_checkout_wizard() {
         });
 
         document.addEventListener('DOMContentLoaded', function() {
+            mpcAdjustTimingOptions();
             if (isUserLoggedIn && autoFillOnLogin && typeof mpcSavedDetails !== 'undefined') {
                 populateFields(mpcSavedDetails);
                 return;
@@ -2170,10 +2615,17 @@ function mpc_render_checkout_wizard() {
                     if (state.address2)   document.getElementById('mpc_address_2').value  = state.address2;
                     if (state.deliveryMethod) {
                         document.getElementById('mpc_delivery_method').value = state.deliveryMethod;
-                        document.getElementById('mpc_delivery_method').dispatchEvent(new Event('change'));
                     }
-                    if (state.deliveryTiming)    document.getElementById('mpc_delivery_timing').value       = state.deliveryTiming;
-                    if (state.timeSlot)          document.getElementById('mpc_time_slot').value             = state.timeSlot;
+                    if (state.deliveryTiming) {
+                        document.getElementById('mpc_delivery_timing').value = state.deliveryTiming;
+                    }
+                    mpcAdjustTimingOptions();
+                    if (state.timeSlot) {
+                        let tsEl = document.getElementById('mpc_time_slot');
+                        if (Array.from(tsEl.options).some(o => o.value === state.timeSlot)) {
+                            tsEl.value = state.timeSlot;
+                        }
+                    }
                     if (state.pickupBranch)      document.getElementById('mpc_pickup_branch').value         = state.pickupBranch;
                     if (state.deliveryZoneCheck) document.getElementById('mpc_delivery_zone_check').checked = state.deliveryZoneCheck;
                     if (state.allergies)         document.getElementById('mpc_allergies').value             = state.allergies;
@@ -2218,27 +2670,25 @@ function mpc_render_checkout_wizard() {
             mpcRenderSummary(); 
             updateLogisticsSummary();
             
+            // Smart Scroll: On Mobile/Tablet where Summary Card is stacked at top, scroll smoothly to Summary Card (which now has its own "Next: Delivery Details" CTA!)
             setTimeout(function() {
-                let nextBtn = document.getElementById('btn-next-1');
-                if (nextBtn) { window.scrollTo({ top: nextBtn.getBoundingClientRect().top - 150, behavior: 'smooth' }); }
-            }, 250);
-        }
-
-        function mpcAdjustTimingOptions() {
-            const method         = document.getElementById('mpc_delivery_method').value;
-            const timeSlotSelect = document.getElementById('mpc_time_slot');
-            const options        = timeSlotSelect.options;
-            let resetNeeded      = false;
-            for (let i = 0; i < options.length; i++) {
-                const isEarlySlot = /^(5|6|7):00 AM/.test(options[i].value);
-                if (method === 'Pickup' && isEarlySlot) {
-                    options[i].disabled = true; options[i].hidden = true;
-                    if (options[i].selected) resetNeeded = true;
+                if (window.innerWidth <= 900) {
+                    let sumCard = document.getElementById('mpc-summary-card');
+                    if (sumCard) {
+                        let targetY = window.pageYOffset + sumCard.getBoundingClientRect().top - 18;
+                        window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                    }
                 } else {
-                    options[i].disabled = false; options[i].hidden = false;
+                    let nextBtn = document.getElementById('btn-next-1');
+                    if (nextBtn) {
+                        let rect = nextBtn.getBoundingClientRect();
+                        if (rect.bottom > window.innerHeight) {
+                            let targetY = window.pageYOffset + rect.top - (window.innerHeight - 120);
+                            window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                        }
+                    }
                 }
-            }
-            if (resetNeeded) timeSlotSelect.value = "8:00 AM to 9:00 AM";
+            }, 200);
         }
 
         document.getElementById('mpc_delivery_method').addEventListener('change', function() {
@@ -2249,12 +2699,16 @@ function mpc_render_checkout_wizard() {
                 document.getElementById('mpc_delivery_zone_container').style.display = 'none';
                 document.getElementById('mpc_pickup_branch_container').style.display = 'block';
             }
-            mpcAdjustTimingOptions(); updateLogisticsSummary();
+            mpcAdjustTimingOptions();
+            updateLogisticsSummary();
         });
 
-        document.getElementById('mpc_delivery_timing').addEventListener('change', updateLogisticsSummary);
-        document.getElementById('mpc_pickup_branch').addEventListener('change',   updateLogisticsSummary);
-        document.getElementById('mpc_time_slot').addEventListener('change',       updateLogisticsSummary);
+        document.getElementById('mpc_delivery_timing').addEventListener('change', function() {
+            mpcAdjustTimingOptions();
+            updateLogisticsSummary();
+        });
+        document.getElementById('mpc_pickup_branch').addEventListener('change', updateLogisticsSummary);
+        document.getElementById('mpc_time_slot').addEventListener('change', updateLogisticsSummary);
 
         function updateLogisticsSummary() {
             let method = document.getElementById('mpc_delivery_method').value;
@@ -2266,11 +2720,17 @@ function mpc_render_checkout_wizard() {
         }
 
         function mpcChangeStep(direction) {
+            if (direction === 1 && currentStep === 1 && !checkoutData.productId) {
+                mpcShowNotice('Please select a meal plan first.', 'error');
+                return;
+            }
+
             if (direction === 1 && currentStep === 2) {
                 let pwdVal = document.getElementById('mpc_password').value;
+                let needsPwd = (!isUserLoggedIn || usingDifferentEmail) && document.getElementById('mpc_password_group').style.display !== 'none';
                 if (!document.getElementById('mpc_first_name').value || !document.getElementById('mpc_email').value ||
-                    (!isUserLoggedIn && !pwdVal) || !document.getElementById('mpc_phone').value || !document.getElementById('mpc_address_1').value) {
-                    mpcShowNotice('Please fill out all mandatory fields (Name, Email, Phone, Address, Password).', 'error');
+                    (needsPwd && !pwdVal) || !document.getElementById('mpc_phone').value || !document.getElementById('mpc_address_1').value) {
+                    mpcShowNotice('Please fill out all mandatory fields (Name, Email, Phone, Address' + (needsPwd ? ', Password' : '') + ').', 'error');
                     return;
                 }
                 let method = document.getElementById('mpc_delivery_method').value;
@@ -2299,6 +2759,12 @@ function mpc_render_checkout_wizard() {
             if (currentStep > totalSteps) currentStep = totalSteps;
             document.getElementById('mpc-step-' + currentStep).classList.add('active');
 
+            // Show/hide the Summary Card's "Next: Delivery Details" button depending on whether we are on Step 1
+            let sumNextBtn = document.getElementById('btn-summary-next-1');
+            if (sumNextBtn) {
+                sumNextBtn.style.display = (currentStep === 1 && checkoutData.productId) ? 'block' : 'none';
+            }
+
             let indicators = document.getElementsByClassName('mpc-step-indicator');
             for (let i = 0; i < indicators.length; i++) {
                 let stepNum = parseInt(indicators[i].getAttribute('data-step'));
@@ -2306,7 +2772,12 @@ function mpc_render_checkout_wizard() {
                 if (stepNum === currentStep) indicators[i].classList.add('active');
                 else if (stepNum < currentStep && indicators[i].style.display !== 'none') indicators[i].classList.add('completed');
             }
-            document.querySelector('.mpc-checkout-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            let wizardArea = document.querySelector('.mpc-wizard-area');
+            if (wizardArea) {
+                let targetY = window.pageYOffset + wizardArea.getBoundingClientRect().top - 16;
+                window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+            }
         }
 
         function mpcSubmitOrder(btn) {
@@ -2321,7 +2792,9 @@ function mpc_render_checkout_wizard() {
             formData.append('last_name',       document.getElementById('mpc_last_name').value);
             formData.append('email',           document.getElementById('mpc_email').value);
             formData.append('phone',           document.getElementById('mpc_phone').value);
-            if (!isUserLoggedIn) formData.append('password', document.getElementById('mpc_password').value);
+            if (!isUserLoggedIn || usingDifferentEmail) {
+                formData.append('password', document.getElementById('mpc_password').value);
+            }
             formData.append('address_1',       document.getElementById('mpc_address_1').value);
             formData.append('address_2',       document.getElementById('mpc_address_2').value);
             formData.append('delivery_method', document.getElementById('mpc_delivery_method').value);
@@ -2394,7 +2867,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
     $provisioned_sub_id = 0;
 
     if ( $existing_sub ) {
-        // Legacy fallback: If a pre-update 'pending' subscription exists, activate it now
         if ( $existing_sub->status === 'pending' ) {
             $days = max( 1, intval( $existing_sub->total_days ) );
             $wpdb->update(
@@ -2423,7 +2895,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         $del_address = $order->get_meta( '_cmp_delivery_address' );
         $prep_timing = $order->get_meta( '_cmp_prep_timing' ) ?: 'auto';
 
-        // Fallback extraction from order items if order was placed outside the custom wizard
         if ( empty( $plan_name ) ) {
             foreach ( $order->get_items() as $item ) {
                 $plan_name  = $item->get_name();
@@ -2432,7 +2903,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
             }
         }
 
-        // Only create a subscription if this order actually contains a meal plan
         if ( empty( $plan_name ) || ( empty( $timing ) && ! $order->get_meta( '_mpc_is_custom_checkout' ) ) ) {
             return;
         }
@@ -2443,6 +2913,7 @@ function mpc_activate_subscription_on_payment( $order_id ) {
             if ( stripos( $plan_name, '20' ) !== false ) $total_days = 20;
             if ( stripos( $plan_name, '24' ) !== false ) $total_days = 24;
             if ( stripos( $plan_name, '5' )  !== false ) $total_days = 5;
+            if ( stripos( $plan_name, '10' ) !== false ) $total_days = 10;
             if ( stripos( $plan_name, '3' )  !== false && stripos( $plan_name, 'juice' ) !== false ) $total_days = 3;
         }
 
@@ -2571,7 +3042,6 @@ function mpc_activate_subscription_on_payment( $order_id ) {
     }
 }
 
-// Automatically clean up any legacy 'pending' subscription rows if an order fails, is cancelled, or is trashed
 add_action( 'woocommerce_order_status_failed',    'mpc_cleanup_unpaid_subscription_on_fail', 10, 1 );
 add_action( 'woocommerce_order_status_cancelled', 'mpc_cleanup_unpaid_subscription_on_fail', 10, 1 );
 add_action( 'woocommerce_order_status_trash',     'mpc_cleanup_unpaid_subscription_on_fail', 10, 1 );
@@ -2587,7 +3057,7 @@ function mpc_cleanup_unpaid_subscription_on_fail( $order_id ) {
 }
 
 // ==========================================
-// 9.5 THANK-YOU PAGE STATUS GUARD (SUPPRESSES DUPLICATE BANNER & VERIFIES PAYMENT)
+// 9.5 THANK-YOU PAGE STATUS GUARD
 // ==========================================
 add_action( 'woocommerce_thankyou', 'mpc_add_dashboard_button_to_thankyou', 5, 1 );
 function mpc_add_dashboard_button_to_thankyou( $order_id ) {
@@ -2596,7 +3066,6 @@ function mpc_add_dashboard_button_to_thankyou( $order_id ) {
         return;
     }
 
-    // Prevent woo-bridge.php from printing a duplicate or unverified banner on the same page
     if ( function_exists( 'cmp_thankyou_page_button' ) ) {
         remove_action( 'woocommerce_thankyou', 'cmp_thankyou_page_button', 10 );
     }
@@ -2605,7 +3074,6 @@ function mpc_add_dashboard_button_to_thankyou( $order_id ) {
     $checkout_url = site_url( '/' );
 
     if ( $order->has_status( array( 'processing', 'completed' ) ) ) {
-        // Ensure subscription is provisioned even if gateway redirect arrived before webhook
         mpc_activate_subscription_on_payment( $order_id );
 
         echo '<div style="margin-top: 40px; padding: 30px; background: #f8fafc; border: 2px solid #379237; border-radius: 12px; text-align: center; box-shadow: 0 4px 12px rgba(27,94,32,0.08);">';
@@ -2717,7 +3185,6 @@ function mpc_verify_ngenius_payment_return() {
         if ( $response_code === 200 && isset( $body['success'] ) && $body['success'] === true ) {
             $state = $body['state'] ?? '';
             if ( in_array( $state, array( 'CAPTURED', 'AUTHORISED', 'PURCHASED' ), true ) ) {
-                // payment_complete() transitions order to Processing/Completed and triggers mpc_activate_subscription_on_payment()
                 $order->payment_complete( $reference );
                 $order->add_order_note( 'Payment captured via N-Genius Bridge. State: ' . $state . ' | Ref: ' . $reference );
                 mpc_activate_subscription_on_payment( $order_id );
