@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-plan-checkout
- * Description: Streamlined custom checkout wizard with configurable sign-in layouts, 4-way Delivery & Store Pick-up time slot matrix, segmented touch pill switchers, interactive coverage map modal, collapsible mobile summary bar, and strict post-payment subscription creation.
+ * Description: Streamlined custom checkout wizard with configurable sign-in layouts, 4-way Delivery & Store Pick-up time slot matrix, touch pill switchers, interactive coverage map modal, collapsible mobile summary bar, dynamic custom plan grouping (CP-1), direct link routing (CP-2), and strict post-payment subscription creation.
  * Version: 4.6.0
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  * Author URI: https://fareed-rifaideen.netlify.app
@@ -1314,16 +1314,7 @@ function mpc_process_order() {
         update_user_meta( $user_id, 'allergies',       $allergies );
     }
 
-    $days = intval( get_post_meta( $product_id, '_cmp_total_days', true ) );
-    if ( $days <= 0 ) {
-        $days = 30;
-        if ( stripos( $plan_title, '7' )  !== false ) $days = 7;
-        if ( stripos( $plan_title, '20' ) !== false ) $days = 20;
-        if ( stripos( $plan_title, '24' ) !== false ) $days = 24;
-        if ( stripos( $plan_title, '5' )  !== false ) $days = 5;
-        if ( stripos( $plan_title, '10' ) !== false ) $days = 10;
-        if ( stripos( $plan_title, '3' )  !== false && stripos( $plan_title, 'juice' ) !== false ) $days = 3;
-    }
+    $days = cmp_resolve_plan_total_days( $product_id, $plan_title, 0 );
 
     $final_plan_name = $plan_title;
     if ( ! empty( $recipient_name ) ) {
@@ -1350,6 +1341,7 @@ function mpc_process_order() {
     $order->set_customer_note( $allergies );
 
     $order->update_meta_data( '_mpc_is_custom_checkout', '1' );
+    $order->update_meta_data( '_cmp_product_id',            intval( $product_id ) );
     $order->update_meta_data( '_cmp_plan_name',          $final_plan_name );
     $order->update_meta_data( '_cmp_total_days',         $days );
     $order->update_meta_data( '_cmp_plan_price',         $base_plan_price );
@@ -1475,7 +1467,7 @@ function mpc_process_order() {
 }
 
 // ==========================================
-// 8. FRONTEND WIZARD RENDERER
+// 8. FRONTEND WIZARD RENDERER (WITH OPTION CP-1 DYNAMIC GROUPING & CP-2 DIRECT-LINK ROUTING)
 // ==========================================
 add_shortcode( 'meal_plan_checkout', 'mpc_render_checkout_wizard' );
 
@@ -1507,29 +1499,64 @@ function mpc_render_checkout_wizard() {
     $args     = array( 'status' => 'publish', 'limit' => -1, 'orderby' => 'meta_value_num', 'meta_key' => '_price', 'order' => 'ASC' );
     $products = wc_get_products( $args );
 
+    // --- OPTION CP-1 & CP-2: DYNAMIC PLAN GROUPING & DIRECT LINK ROUTING ---
+    $requested_custom_id = isset( $_GET['custom_plan'] ) ? intval( $_GET['custom_plan'] ) : 0;
+    $auto_selected_plan  = null;
+
     $grouped_plans = array(
         '7-days'  => array( 'label' => '7-Day Plans',      'items' => array() ),
+        '10-days' => array( 'label' => '10-Day Plans',     'items' => array() ),
+        '14-days' => array( 'label' => '14-Day Plans',     'items' => array() ),
         '20-days' => array( 'label' => '20-Day Plans',     'items' => array() ),
         '24-days' => array( 'label' => '24-Day Plans',     'items' => array() ),
         'juice'   => array( 'label' => 'Cleanse Boosters', 'items' => array() ),
-        'other'   => array( 'label' => 'Other Plans',      'items' => array() ),
+        'other'   => array( 'label' => 'Custom & Other Plans', 'items' => array() ),
     );
 
     foreach ( $products as $product ) {
-        $tag_slugs = wp_get_post_terms( $product->get_id(), 'product_tag', array( 'fields' => 'slugs' ) );
+        $product_id = intval( $product->get_id() );
+        $title      = $product->get_name();
+
+        // Option CP-2: Hide product from frontend if marked "Direct Link Only" UNLESS requested via ?custom_plan={ID}
+        $direct_only = get_post_meta( $product_id, '_cmp_direct_link_only', true ) === 'yes';
+        if ( $direct_only && $requested_custom_id !== $product_id ) {
+            continue;
+        }
+
+        $tag_slugs = wp_get_post_terms( $product_id, 'product_tag', array( 'fields' => 'slugs' ) );
         if ( is_wp_error( $tag_slugs ) ) {
             $tag_slugs = array();
         }
+
         $assigned = false;
-        foreach ( array( '7-days', '20-days', '24-days', 'juice' ) as $target_tag ) {
+        foreach ( array( '7-days', '10-days', '14-days', '20-days', '24-days', 'juice' ) as $target_tag ) {
             if ( in_array( $target_tag, $tag_slugs, true ) ) {
                 $grouped_plans[ $target_tag ]['items'][] = $product;
                 $assigned = true;
                 break;
             }
         }
+
         if ( ! $assigned ) {
-            $grouped_plans['other']['items'][] = $product;
+            // Option CP-1: Fallback Dynamic Day Resolver for custom plan grouping
+            $resolved_d = cmp_resolve_plan_total_days( $product_id, $title, 0 );
+            $key_match  = $resolved_d . '-days';
+            if ( isset( $grouped_plans[ $key_match ] ) ) {
+                $grouped_plans[ $key_match ]['items'][] = $product;
+            } else {
+                $grouped_plans['other']['items'][] = $product;
+            }
+        }
+
+        if ( $requested_custom_id > 0 && $product_id === $requested_custom_id ) {
+            $auto_selected_plan = $product;
+        }
+    }
+
+    // Clean up empty category groups
+    foreach ( $grouped_plans as $g_key => $g_data ) {
+        if ( empty( $g_data['items'] ) ) {
+            unset( $grouped_plans[ $g_key ] );
         }
     }
 
@@ -1590,367 +1617,27 @@ function mpc_render_checkout_wizard() {
         <script>var mpcSavedDetails = <?php echo wp_json_encode( $saved_user_details ); ?>;</script>
     <?php endif; ?>
 
-    <style>
-        /* Theme-Proof Reset & Embedded Email Pill */
-        .mpc-checkout-container button,
-        .mpc-checkout-container a,
-        .mpc-checkout-container input,
-        .mpc-checkout-container select {
-            letter-spacing: normal !important;
-            text-transform: none !important;
-        }
-        .mpc-email-input-wrap {
-            position: relative !important;
-            display: flex !important;
-            align-items: center !important;
-            width: 100% !important;
-        }
-        .mpc-email-input-wrap input#mpc_email.is-locked-email {
-            padding-right: 96px !important;
-            background: #f1f5f9 !important;
-            color: #334155 !important;
-            cursor: not-allowed !important;
-            text-overflow: ellipsis !important;
-        }
-        .mpc-embedded-email-pill {
-            position: absolute !important;
-            right: 7px !important;
-            top: 50% !important;
-            transform: translateY(-50%) !important;
-            background: #EEF7E3 !important;
-            color: #1B5E20 !important;
-            border: 1px solid #68B946 !important;
-            border-radius: 6px !important;
-            padding: 4px 10px !important;
-            font-size: 0.75rem !important;
-            font-weight: 800 !important;
-            line-height: 1.2 !important;
-            letter-spacing: normal !important;
-            white-space: nowrap !important;
-            cursor: pointer !important;
-            z-index: 5 !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            gap: 4px !important;
-            height: auto !important;
-            width: auto !important;
-            margin: 0 !important;
-            box-shadow: 0 1px 2px rgba(27, 94, 32, 0.08) !important;
-            transition: all 0.15s ease !important;
-        }
-        .mpc-embedded-email-pill:hover {
-            background: #379237 !important;
-            color: #ffffff !important;
-            border-color: #1B5E20 !important;
-        }
-
-        /* Touch-Friendly 2-Button Segmented Pill Switchers (Option LOG-1) */
-        .mpc-segmented-control {
-            display: grid !important;
-            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            gap: 6px !important;
-            background: #e2e8f0 !important;
-            padding: 4px !important;
-            border-radius: 10px !important;
-            width: 100% !important;
-        }
-        .mpc-seg-pill {
-            background: transparent !important;
-            color: #475569 !important;
-            border: 1px solid transparent !important;
-            border-radius: 7px !important;
-            padding: 9px 8px !important;
-            font-size: 0.85rem !important;
-            font-weight: 800 !important;
-            line-height: 1.2 !important;
-            cursor: pointer !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            gap: 5px !important;
-            text-align: center !important;
-            white-space: nowrap !important;
-            transition: all 0.18s ease !important;
-            height: auto !important;
-            width: 100% !important;
-            margin: 0 !important;
-            box-shadow: none !important;
-        }
-        .mpc-seg-pill:hover {
-            color: #1B5E20 !important;
-        }
-        .mpc-seg-pill.is-active {
-            background: #ffffff !important;
-            color: #1B5E20 !important;
-            border-color: #68B946 !important;
-            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08) !important;
-        }
-        .mpc-hidden-native-select {
-            display: none !important;
-        }
-
-        /* Non-Clipped Delivery Zone Confirmation Card & Visible View Map Button (Option MAP-1 / MAP-2) */
-        .mpc-zone-confirm-card {
-            background: #ffffff !important;
-            border: 1.5px solid #cbd5e1 !important;
-            border-left: 4px solid #379237 !important;
-            border-radius: 10px !important;
-            padding: 11px 14px !important;
-            margin-top: 12px !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: space-between !important;
-            flex-wrap: wrap !important;
-            gap: 10px 14px !important;
-            width: 100% !important;
-            box-sizing: border-box !important;
-        }
-        .mpc-zone-confirm-card label.mpc-zone-check-label {
-            display: inline-flex !important;
-            align-items: center !important;
-            gap: 10px !important;
-            cursor: pointer !important;
-            font-size: 0.88rem !important;
-            font-weight: 700 !important;
-            color: #1e293b !important;
-            line-height: 1.35 !important;
-            white-space: normal !important;
-            overflow: visible !important;
-            text-overflow: clip !important;
-            margin: 0 !important;
-            flex: 1 1 210px !important;
-        }
-        .mpc-zone-confirm-card label.mpc-zone-check-label input[type="checkbox"] {
-            width: 19px !important;
-            height: 19px !important;
-            min-width: 19px !important;
-            margin: 0 !important;
-            accent-color: #379237 !important;
-            cursor: pointer !important;
-            flex-shrink: 0 !important;
-        }
-        .mpc-view-map-pill {
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            gap: 6px !important;
-            background: #EEF7E3 !important;
-            color: #1B5E20 !important;
-            border: 1.5px solid #68B946 !important;
-            border-radius: 8px !important;
-            padding: 7px 13px !important;
-            font-size: 0.81rem !important;
-            font-weight: 800 !important;
-            line-height: 1.2 !important;
-            text-decoration: none !important;
-            white-space: nowrap !important;
-            cursor: pointer !important;
-            flex-shrink: 0 !important;
-            height: auto !important;
-            width: auto !important;
-            margin: 0 !important;
-            transition: all 0.18s ease !important;
-            box-shadow: 0 2px 5px rgba(27, 94, 32, 0.08) !important;
-        }
-        .mpc-view-map-pill:hover {
-            background: #379237 !important;
-            color: #ffffff !important;
-            border-color: #1B5E20 !important;
-            transform: translateY(-1px);
-        }
-
-        /* Collapsible Mobile Plan Summary Bar on Steps 2 & 3 (Option SUM-1) */
-        .mpc-mobile-summary-bar {
-            display: none;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            width: 100%;
-            cursor: pointer;
-            user-select: none;
-        }
-        .mpc-mob-sum-left {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            min-width: 0;
-            flex: 1;
-        }
-        .mpc-mob-sum-plan {
-            font-size: 0.88rem;
-            font-weight: 800;
-            color: #1B5E20;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .mpc-mob-sum-total {
-            font-size: 0.82rem;
-            font-weight: 700;
-            color: #1e293b;
-        }
-        .mpc-mob-sum-toggle-pill {
-            background: #EEF7E3;
-            color: #1B5E20;
-            border: 1px solid #68B946;
-            border-radius: 999px;
-            padding: 5px 11px;
-            font-size: 0.75rem;
-            font-weight: 800;
-            white-space: nowrap;
-            flex-shrink: 0;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        /* In-Page Zoomable Coverage Map Lightbox Modal */
-        .mpc-map-modal-backdrop {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.72);
-            backdrop-filter: blur(5px);
-            -webkit-backdrop-filter: blur(5px);
-            z-index: 100090;
-            align-items: center;
-            justify-content: center;
-            padding: 14px;
-        }
-        .mpc-map-modal-backdrop.is-open {
-            display: flex !important;
-        }
-        .mpc-map-modal-dialog {
-            background: #ffffff;
-            border: 2px solid #DCECC9;
-            border-top: 5px solid #379237;
-            border-radius: 16px;
-            max-width: 780px;
-            width: 100%;
-            max-height: 90vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            box-shadow: 0 24px 48px rgba(15, 23, 42, 0.35);
-        }
-        .mpc-map-modal-header {
-            padding: 14px 18px;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-        }
-        .mpc-map-modal-header h4 {
-            margin: 0;
-            font-size: 1.05rem;
-            font-weight: 800;
-            color: #1B5E20;
-        }
-        .mpc-map-modal-close-x {
-            background: #e2e8f0 !important;
-            color: #334155 !important;
-            border: none !important;
-            border-radius: 50% !important;
-            width: 32px !important;
-            height: 32px !important;
-            font-size: 1.2rem !important;
-            font-weight: 800 !important;
-            line-height: 1 !important;
-            cursor: pointer !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            padding: 0 !important;
-            margin: 0 !important;
-        }
-        .mpc-map-modal-body {
-            padding: 12px;
-            overflow: auto;
-            text-align: center;
-            background: #f1f5f9;
-            flex: 1;
-            -webkit-overflow-scrolling: touch;
-        }
-        .mpc-map-modal-body img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 8px;
-            display: block;
-            margin: 0 auto;
-        }
-        .mpc-map-modal-footer {
-            padding: 12px 18px;
-            background: #ffffff;
-            border-top: 1px solid #e2e8f0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        .mpc-map-confirm-close-btn {
-            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important;
-            color: #ffffff !important;
-            border: none !important;
-            border-radius: 8px !important;
-            padding: 10px 18px !important;
-            font-size: 0.88rem !important;
-            font-weight: 800 !important;
-            cursor: pointer !important;
-            height: auto !important;
-            width: auto !important;
-            margin: 0 !important;
-        }
-
-        @media (max-width: 992px) {
-            .mpc-summary-area.is-mobile-collapsible-step {
-                padding: 12px 16px !important;
-            }
-            .mpc-summary-area.is-mobile-collapsible-step .mpc-mobile-summary-bar {
-                display: flex !important;
-            }
-            .mpc-summary-area.is-mobile-collapsible-step:not(.is-mobile-expanded) .mpc-summary-full-body {
-                display: none !important;
-            }
-            .mpc-summary-area.is-mobile-collapsible-step.is-mobile-expanded .mpc-summary-full-body {
-                display: block !important;
-                margin-top: 12px !important;
-                padding-top: 12px !important;
-                border-top: 1px solid #DCECC9 !important;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .mpc-logistics-switch-grid {
-                display: grid !important;
-                grid-template-columns: 1fr !important;
-                gap: 10px !important;
-            }
-            .mpc-seg-pill {
-                padding: 9px 10px !important;
-                font-size: 0.83rem !important;
-            }
-            .mpc-zone-confirm-card {
-                padding: 10px 12px !important;
-                gap: 8px 10px !important;
-            }
-            .mpc-zone-confirm-card label.mpc-zone-check-label {
-                font-size: 0.82rem !important;
-                flex: 1 1 100% !important;
-            }
-            .mpc-view-map-pill {
-                width: 100% !important;
-                justify-content: center !important;
-                padding: 8px 12px !important;
-            }
-            .mpc-map-confirm-close-btn {
-                width: 100% !important;
-                text-align: center !important;
-            }
-        }
-    </style>
+    <?php if ( $auto_selected_plan ) :
+        $auto_id      = $auto_selected_plan->get_id();
+        $auto_title   = $auto_selected_plan->get_name();
+        $auto_price   = $auto_selected_plan->get_price();
+        $auto_juice   = ( stripos( $auto_title, 'juice' ) !== false || stripos( $auto_title, 'cleanse' ) !== false ) ? 'true' : 'false';
+        preg_match( '/(\d+)\s*Meal/i', $auto_title, $am );
+        $auto_allowed = isset( $am[1] ) ? intval( $am[1] ) : 1;
+    ?>
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                const autoTile = document.querySelector('.mpc-tile[data-product-id="<?php echo esc_js( $auto_id ); ?>"]');
+                if (autoTile) {
+                    autoTile.click();
+                } else {
+                    mpcSelectPlan(null, '<?php echo esc_js( $auto_title ); ?>', '<?php echo esc_js( $auto_price ); ?>', <?php echo $auto_juice; ?>, <?php echo esc_js( $auto_id ); ?>, <?php echo esc_js( $auto_allowed ); ?>);
+                }
+            }, 300);
+        });
+        </script>
+    <?php endif; ?>
 
     <div class="mpc-checkout-container" data-login-mode="<?php echo esc_attr( $login_ui_mode ); ?>">
 
@@ -2060,10 +1747,10 @@ function mpc_render_checkout_wizard() {
                                     <p class="mpc-auth-help-text">Enter your account email and we will send you a password reset link:</p>
                                     <div class="mpc-inline-forgot-grid">
                                         <input type="email" id="mpc_l3_forgot_email" class="mpc-form-control" placeholder="Enter your email address">
-                                        <button type="button" id="mpc-l3-forgot-submit" class="mpc-btn mpc-auth-reset-btn">Send Reset Link</button>
+                                        <button type="button" id="mpc_l3_forgot_submit" class="mpc-btn mpc-auth-reset-btn">Send Reset Link</button>
                                     </div>
                                     <div class="mpc-auth-links-row">
-                                        <span id="mpc-l3-forgot-msg" style="font-weight:700;"></span>
+                                        <span id="mpc_l3_forgot_msg" style="font-weight:700;"></span>
                                         <a href="#signin-l3" id="mpc-l3-back-signin" class="mpc-auth-link">&larr; Back to Sign In</a>
                                     </div>
                                 </div>
@@ -2099,7 +1786,7 @@ function mpc_render_checkout_wizard() {
 
                 <div id="mpc-step-1-plans-container">
                     <?php
-                    if ( empty( $products ) ) {
+                    if ( empty( $grouped_plans ) ) {
                         echo '<p>No products found.</p>';
                     } else {
                         foreach ( $grouped_plans as $group_data ) {
@@ -2109,16 +1796,16 @@ function mpc_render_checkout_wizard() {
                             echo '<h3 class="mpc-cat-header">' . esc_html( $group_data['label'] ) . '</h3>';
                             echo '<div class="mpc-grid">';
                             foreach ( $group_data['items'] as $product ) {
-                                $id            = $product->get_id();
+                                $id            = intval( $product->get_id() );
                                 $title         = $product->get_name();
                                 $price_html    = $product->get_price_html();
                                 $raw_price     = $product->get_price();
                                 $desc          = $product->get_short_description();
                                 $is_juice      = ( stripos( $title, 'juice' ) !== false || stripos( $title, 'cleanse' ) !== false ) ? 'true' : 'false';
                                 preg_match( '/(\d+)\s*Meal/i', $title, $m );
-                                $allowed_meals = isset( $m[1] ) ? intval( $m[1] ) : 0;
+                                $allowed_meals = isset( $m[1] ) ? intval( $m[1] ) : 1;
                                 $display_title = str_replace( ' - ', ' - <br>', esc_html( $title ) );
-                                echo '<div class="mpc-tile" onclick="mpcSelectPlan(this, \'' . esc_attr( $title ) . '\', \'' . esc_attr( $raw_price ) . '\', ' . $is_juice . ', ' . $id . ', ' . $allowed_meals . ')">';
+                                echo '<div class="mpc-tile" data-product-id="' . esc_attr( $id ) . '" onclick="mpcSelectPlan(this, \'' . esc_attr( $title ) . '\', \'' . esc_attr( $raw_price ) . '\', ' . $is_juice . ', ' . $id . ', ' . $allowed_meals . ')">';
                                 echo '<div><div class="mpc-tile-title">' . $display_title . '</div>';
                                 echo '<div class="mpc-tile-price">' . wp_kses_post( $price_html ) . '</div></div>';
                                 if ( ! empty( $desc ) ) {
@@ -2419,12 +2106,9 @@ function mpc_render_checkout_wizard() {
         let mpcMapDisplayMode     = '<?php echo esc_js( $map_display_mode ); ?>';
         let mpcMapUrl             = '<?php echo esc_js( $map_url ); ?>';
 
-        // 4-Way Configured Time Slot Matrix (Synced via Live AJAX on Page Load)
         let mpcSlotConfig = <?php echo wp_json_encode( $slot_config ); ?>;
-        
         let appliedCoupon = { code: '', discountType: '', amount: 0, label: '' };
 
-        // Non-Blocking Toast Notification Helper
         function mpcShowNotice(message, type) {
             document.querySelectorAll('.mpc-toast-notice').forEach(el => el.remove());
             const toast = document.createElement('div');
@@ -2465,7 +2149,6 @@ function mpc_render_checkout_wizard() {
             return 'Deliver Day Before';
         }
 
-        // Sync Segmented Pill Buttons with Native Select Values
         function mpcSyncSegmentedPills() {
             const methodVal = document.getElementById('mpc_delivery_method').value;
             const timingVal = mpcNormalizeTimingValue(document.getElementById('mpc_delivery_timing').value);
@@ -2492,7 +2175,6 @@ function mpc_render_checkout_wizard() {
             });
         });
 
-        // Sync Mobile Collapsible Summary State on Steps 2 & 3
         function mpcSyncMobileSummaryMode() {
             const sumCard = document.getElementById('mpc-summary-card');
             if (!sumCard) return;
@@ -2516,7 +2198,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Coverage Map Trigger (Modal vs. New Tab based on Checkout Settings)
         let viewMapTrigger = document.getElementById('mpc-view-map-trigger');
         let mapModal       = document.getElementById('mpc-coverage-map-modal');
         if (viewMapTrigger) {
@@ -2554,7 +2235,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Uncached AJAX Sync for Fresh Nonce, Live 4-Way Time Slots & UX Modes
         let _mpcFreshNonce = null;
         fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', {
             method: 'POST',
@@ -2589,7 +2269,6 @@ function mpc_render_checkout_wizard() {
             }
         });
 
-        // LIVE VIP TOKEN VALIDATION
         const urlParams = new URLSearchParams(window.location.search);
         const urlToken  = urlParams.get('vip_token');
 
@@ -2613,7 +2292,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // ---- NATIVE MATH SUMMARY UI ----
         function mpcRenderSummary() {
             let sumBtn = document.getElementById('btn-summary-next-1');
             if (!checkoutData.planPrice) {
@@ -2644,7 +2322,6 @@ function mpc_render_checkout_wizard() {
             let depositAmt = (requiresDeposit && !is100PercentFree) ? 150 : 0;
             let newTotal = discountedPrice + depositAmt;
 
-            // Update Compact Mobile Summary Header Bar
             let mobPlanEl  = document.getElementById('mpc-mob-sum-plan-name');
             let mobTotalEl = document.getElementById('mpc-mob-sum-total-val');
             if (mobPlanEl)  mobPlanEl.textContent  = '\ud83d\udccb ' + checkoutData.planName;
@@ -2761,7 +2438,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // ---- 4-WAY DYNAMIC TIME SLOT BUILDER ----
         function mpcAdjustTimingOptions() {
             const methodEl       = document.getElementById('mpc_delivery_method');
             const timingEl       = document.getElementById('mpc_delivery_timing');
@@ -2937,7 +2613,6 @@ function mpc_render_checkout_wizard() {
             });
         });
 
-        // Unified Post-Login UI Updater
         function handleSuccessfulAjaxLogin(userData) {
             isUserLoggedIn        = true;
             usingDifferentEmail   = false;
@@ -3103,7 +2778,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Bind Top Account Bar Controls
         let topToggleBtn = document.getElementById('mpc-top-login-toggle');
         if (topToggleBtn) {
             topToggleBtn.addEventListener('click', function(e) {
@@ -3156,7 +2830,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Bind Step 1 Customer Type Tabs Controls
         document.querySelectorAll('.mpc-l3-tab-btn[data-l3-tab]').forEach(btn => {
             btn.addEventListener('click', function() {
                 document.querySelectorAll('.mpc-l3-tab-btn[data-l3-tab]').forEach(b => b.classList.remove('active'));
@@ -3210,7 +2883,6 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // Bind Step 2 Login Controls
         let showLogin = document.getElementById('mpc-show-login');
         if (showLogin) {
             showLogin.addEventListener('click', function(e) {
@@ -3235,7 +2907,6 @@ function mpc_render_checkout_wizard() {
             });
         });
 
-        // Smart Existing-Email Detector on Step 2
         let step2EmailInput = document.getElementById('mpc_email');
         if (step2EmailInput && emailGuardEnabled) {
             step2EmailInput.addEventListener('blur', function() {
@@ -3366,7 +3037,12 @@ function mpc_render_checkout_wizard() {
         function mpcSelectPlan(tileElement, planName, planPrice, isJuice, productId, allowedMeals) {
             checkoutData = { productId, planName, planPrice, isJuice, allowedMeals };
             document.querySelectorAll('.mpc-tile').forEach(t => t.classList.remove('selected'));
-            tileElement.classList.add('selected');
+            if (tileElement) {
+                tileElement.classList.add('selected');
+            } else {
+                let matchingTile = document.querySelector('.mpc-tile[data-product-id="' + productId + '"]');
+                if (matchingTile) matchingTile.classList.add('selected');
+            }
             document.getElementById('btn-next-1').disabled = false;
             
             if (appliedCoupon.code) {
@@ -3608,22 +3284,28 @@ function mpc_activate_subscription_on_payment( $order_id ) {
         }
         $provisioned_sub_id = intval( $existing_sub->id );
     } else {
-        $plan_name   = $order->get_meta( '_cmp_plan_name' );
-        $total_days  = intval( $order->get_meta( '_cmp_total_days' ) );
-        $categories  = $order->get_meta( '_cmp_allowed_categories' );
-        $plan_price  = (float) $order->get_meta( '_cmp_plan_price' );
-        $discount    = (float) $order->get_meta( '_cmp_discount_amount' );
-        $method      = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
-        $pickup      = $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' );
-        $timing      = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
-        $time_slot   = $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' );
-        $allergies   = $order->get_meta( 'allergies' );
-        $del_address = $order->get_meta( '_cmp_delivery_address' );
-        $prep_timing = $order->get_meta( '_cmp_prep_timing' ) ?: 'auto';
+        $product_id        = intval( $order->get_meta( '_cmp_product_id' ) ?: get_post_meta( $order_id, '_cmp_product_id', true ) );
+        $plan_name         = $order->get_meta( '_cmp_plan_name' );
+        $meta_total_days   = intval( $order->get_meta( '_cmp_total_days' ) );
+        $categories        = $order->get_meta( '_cmp_allowed_categories' );
+        $plan_price        = (float) $order->get_meta( '_cmp_plan_price' );
+        $discount          = (float) $order->get_meta( '_cmp_discount_amount' );
+        $method            = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
+        $pickup            = $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' );
+        $timing            = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
+        $time_slot         = $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' );
+        $allergies         = $order->get_meta( 'allergies' );
+        $del_address       = $order->get_meta( '_cmp_delivery_address' );
+        $prep_timing       = $order->get_meta( '_cmp_prep_timing' ) ?: 'auto';
 
-        if ( empty( $plan_name ) ) {
+        if ( empty( $plan_name ) || $product_id <= 0 ) {
             foreach ( $order->get_items() as $item ) {
-                $plan_name  = $item->get_name();
+                if ( empty( $plan_name ) ) {
+                    $plan_name  = $item->get_name();
+                }
+                if ( $product_id <= 0 ) {
+                    $product_id = intval( $item->get_product_id() );
+                }
                 $plan_price = (float) $order->get_subtotal();
                 break;
             }
@@ -3633,15 +3315,7 @@ function mpc_activate_subscription_on_payment( $order_id ) {
             return;
         }
 
-        if ( $total_days <= 0 ) {
-            $total_days = 30;
-            if ( stripos( $plan_name, '7' )  !== false ) $total_days = 7;
-            if ( stripos( $plan_name, '20' ) !== false ) $total_days = 20;
-            if ( stripos( $plan_name, '24' ) !== false ) $total_days = 24;
-            if ( stripos( $plan_name, '5' )  !== false ) $total_days = 5;
-            if ( stripos( $plan_name, '10' ) !== false ) $total_days = 10;
-            if ( stripos( $plan_name, '3' )  !== false && stripos( $plan_name, 'juice' ) !== false ) $total_days = 3;
-        }
+        $total_days = cmp_resolve_plan_total_days( $product_id, $plan_name, $meta_total_days );
 
         if ( empty( $categories ) ) {
             $categories = ( stripos( $plan_name, 'juice' ) !== false || stripos( $plan_name, 'cleanse' ) !== false )
@@ -3763,6 +3437,9 @@ function mpc_activate_subscription_on_payment( $order_id ) {
     if ( $meta_needs_save ) {
         $order->save();
     }
+
+    // Option CP-2: Auto-unpublish custom plan product upon confirmed payment
+    cmp_maybe_auto_unpublish_custom_plan_on_payment( $order_id );
 }
 
 add_action( 'woocommerce_order_status_failed',    'mpc_cleanup_unpaid_subscription_on_fail', 10, 1 );
