@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Meal Plan Custom Checkout
  * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-plan-checkout
- * Description: Streamlined custom checkout wizard with configurable sign-in layouts, 4-way Delivery & Store Pick-up time slot matrix, summary-card promo codes, embedded alternate-email toggle, and strict post-payment subscription creation.
- * Version: 4.5.0
+ * Description: Streamlined custom checkout wizard with configurable sign-in layouts, 4-way Delivery & Store Pick-up time slot matrix, segmented touch pill switchers, interactive coverage map modal, collapsible mobile summary bar, and strict post-payment subscription creation.
+ * Version: 4.6.0
  * Author: By RM Dev Team | Customised by Fareed M Rifaideen
  * Author URI: https://fareed-rifaideen.netlify.app
  */
@@ -130,6 +130,18 @@ function mpc_record_user_logistics_profile( $user_id, $sub_id, $profile_data = a
 }
 
 /**
+ * Resolves the Delivery Coverage Map URL with a reliable default fallback.
+ */
+function mpc_get_coverage_map_url() {
+    $default_map = 'https://mealplan.thecyclebistro.com/wp-content/uploads/2026/04/Coverage-Map.jpg';
+    $saved_map   = trim( (string) get_option( 'cmp_map_url', '' ) );
+    if ( empty( $saved_map ) || $saved_map === '#' ) {
+        return $default_map;
+    }
+    return $saved_map;
+}
+
+/**
  * Returns the master catalog of standard hourly time slot presets for the 4-way visual builder.
  */
 function mpc_get_master_preset_time_slots() {
@@ -144,11 +156,7 @@ function mpc_get_master_preset_time_slots() {
 }
 
 /**
- * Retrieves the 4-Way Time Slot Matrix configured in WP Admin > Meal Portal > Checkout Settings:
- *  1. Home/Office Delivery — Day Before (`mpc_slots_day_before`)
- *  2. Home/Office Delivery — Same Day (`mpc_slots_same_day`)
- *  3. Store Pick-up — Day Before (`mpc_slots_pickup_day_before`)
- *  4. Store Pick-up — Same Day (`mpc_slots_pickup_same_day`)
+ * Retrieves the 4-Way Time Slot Matrix configured in WP Admin > Meal Portal > Checkout Settings.
  */
 function mpc_get_configured_time_slots() {
     $default_evening = array(
@@ -173,21 +181,18 @@ function mpc_get_configured_time_slots() {
         '11:00 AM to 12:00 PM',
     );
 
-    // 1. Delivery — Day Before
     $del_day_before = get_option( 'mpc_slots_day_before', null );
     if ( ! is_array( $del_day_before ) || empty( $del_day_before ) ) {
         $del_day_before = $default_evening;
     }
     $del_day_before = array_values( array_unique( array_filter( array_map( 'trim', $del_day_before ) ) ) );
 
-    // 2. Delivery — Same Day
     $del_same_day = get_option( 'mpc_slots_same_day', null );
     if ( ! is_array( $del_same_day ) || empty( $del_same_day ) ) {
         $del_same_day = $default_morning_del;
     }
     $del_same_day = array_values( array_unique( array_filter( array_map( 'trim', $del_same_day ) ) ) );
 
-    // 3. Store Pick-up — Day Before
     $pk_day_before = get_option( 'mpc_slots_pickup_day_before', null );
     if ( ! is_array( $pk_day_before ) || empty( $pk_day_before ) ) {
         $pk_day_before = array_values( array_filter( $del_day_before, function( $s ) {
@@ -199,7 +204,6 @@ function mpc_get_configured_time_slots() {
     }
     $pk_day_before = array_values( array_unique( array_filter( array_map( 'trim', $pk_day_before ) ) ) );
 
-    // 4. Store Pick-up — Same Day
     $pk_same_day = get_option( 'mpc_slots_pickup_same_day', null );
     if ( ! is_array( $pk_same_day ) || empty( $pk_same_day ) ) {
         $pk_same_day = array_values( array_filter( $del_same_day, function( $s ) {
@@ -279,12 +283,28 @@ function mpc_render_checkout_settings_admin_page() {
         }
     }
 
-    // 3. Handle Saving Checkout Settings & 4-Way Time Slot Matrix
+    // 3. Handle Saving Checkout Settings, Mobile Summary Mode, Map Viewer Mode & 4-Way Time Slots
     if ( isset( $_POST['mpc_save_checkout_settings'] ) && check_admin_referer( 'mpc_checkout_settings_action', 'mpc_checkout_settings_nonce' ) ) {
         $login_mode = sanitize_text_field( wp_unslash( $_POST['mpc_checkout_login_mode'] ?? 'l1' ) );
         if ( ! in_array( $login_mode, array( 'l1', 'l3', 'both', 'step2' ), true ) ) {
             $login_mode = 'l1';
         }
+
+        $mobile_summary_mode = sanitize_text_field( wp_unslash( $_POST['mpc_mobile_summary_mode'] ?? 'collapsible' ) );
+        if ( ! in_array( $mobile_summary_mode, array( 'collapsible', 'expanded' ), true ) ) {
+            $mobile_summary_mode = 'collapsible';
+        }
+
+        $map_display_mode = sanitize_text_field( wp_unslash( $_POST['mpc_map_display_mode'] ?? 'modal' ) );
+        if ( ! in_array( $map_display_mode, array( 'modal', 'new_tab' ), true ) ) {
+            $map_display_mode = 'modal';
+        }
+
+        $map_url_input = isset( $_POST['cmp_map_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['cmp_map_url'] ) ) ) : '';
+        if ( ! empty( $map_url_input ) ) {
+            update_option( 'cmp_map_url', $map_url_input );
+        }
+
         $autofill_default = isset( $_POST['mpc_checkout_autofill_default'] ) ? '1' : '0';
         $email_guard      = isset( $_POST['mpc_checkout_email_guard'] ) ? '1' : '0';
 
@@ -304,6 +324,8 @@ function mpc_render_checkout_settings_admin_page() {
         $final_pk_sd  = $parse_slot_group( 'mpc_pk_sd_preset_slots', 'mpc_pk_sd_custom_slots', array( '8:00 AM to 9:00 AM' ) );
 
         update_option( 'mpc_checkout_login_mode', $login_mode );
+        update_option( 'mpc_mobile_summary_mode', $mobile_summary_mode );
+        update_option( 'mpc_map_display_mode', $map_display_mode );
         update_option( 'mpc_checkout_autofill_default', $autofill_default );
         update_option( 'mpc_checkout_email_guard', $email_guard );
         update_option( 'mpc_slots_day_before', $final_del_db );
@@ -311,7 +333,6 @@ function mpc_render_checkout_settings_admin_page() {
         update_option( 'mpc_slots_pickup_day_before', $final_pk_db );
         update_option( 'mpc_slots_pickup_same_day', $final_pk_sd );
 
-        // Flush page & object caches so changes appear immediately on the frontend
         if ( function_exists( 'wp_cache_flush' ) ) {
             wp_cache_flush();
         }
@@ -320,12 +341,15 @@ function mpc_render_checkout_settings_admin_page() {
         }
         do_action( 'litespeed_purge_all' );
 
-        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Checkout Settings &amp; 4-Way Delivery/Pickup Time Slots saved successfully.</strong></p></div>';
+        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Checkout Settings, Mobile UX Options &amp; 4-Way Delivery/Pickup Time Slots saved successfully.</strong></p></div>';
     }
 
-    $current_login_mode = get_option( 'mpc_checkout_login_mode', 'l1' );
-    $autofill_default   = get_option( 'mpc_checkout_autofill_default', '1' );
-    $email_guard        = get_option( 'mpc_checkout_email_guard', '1' );
+    $current_login_mode   = get_option( 'mpc_checkout_login_mode', 'l1' );
+    $mobile_summary_mode  = get_option( 'mpc_mobile_summary_mode', 'collapsible' );
+    $map_display_mode     = get_option( 'mpc_map_display_mode', 'modal' );
+    $current_map_url      = mpc_get_coverage_map_url();
+    $autofill_default     = get_option( 'mpc_checkout_autofill_default', '1' );
+    $email_guard          = get_option( 'mpc_checkout_email_guard', '1' );
 
     $slot_config     = mpc_get_configured_time_slots();
     $master_presets  = mpc_get_master_preset_time_slots();
@@ -417,7 +441,7 @@ function mpc_render_checkout_settings_admin_page() {
         .mpc-toggle-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 12px; cursor: pointer; }
         .mpc-toggle-row input[type="checkbox"] { margin-top: 3px; accent-color: #379237; transform: scale(1.2); }
 
-        /* 4-Way Time Slot Matrix (Full Visibility - Zero Scroll Trap) */
+        /* 4-Way Time Slot Matrix */
         .mpc-slots-builder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-bottom: 18px; }
         @media (max-width: 960px) { .mpc-slots-builder-grid { grid-template-columns: 1fr; } }
         .mpc-slot-panel { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; justify-content: space-between; }
@@ -448,7 +472,7 @@ function mpc_render_checkout_settings_admin_page() {
 
         <div class="mpc-admin-header">
             <h1>Meal Plan Checkout Settings</h1>
-            <p>Manage Customer Sign-In Layout, 4-Way Delivery &amp; Store Pick-up Time Slots, Returning Customer Preferences, and Pending Subscription Records.</p>
+            <p>Manage Customer Sign-In Layout, Mobile Summary &amp; Coverage Map UX, 4-Way Delivery/Pickup Time Slots, and Pending Subscription Records.</p>
         </div>
 
         <form method="POST" action="">
@@ -459,7 +483,7 @@ function mpc_render_checkout_settings_admin_page() {
                 <h2>1. Customer Sign-In Layout</h2>
                 <p style="color:#475569; margin-top:0; margin-bottom:16px;">Select how returning customers sign in during checkout. Signing in on Step 1 immediately waives the AED 150 Thermal Bag Deposit (when held on their account) and unlocks email-restricted promo codes.</p>
 
-                <div class="mpc-radio-grid" id="mpc-login-mode-cards">
+                <div class="mpc-radio-grid" data-radio-group="login-mode">
                     <label class="mpc-radio-card <?php echo $current_login_mode === 'l1' ? 'is-selected' : ''; ?>">
                         <input type="radio" name="mpc_checkout_login_mode" value="l1" <?php checked( $current_login_mode, 'l1' ); ?>>
                         <span>
@@ -493,7 +517,52 @@ function mpc_render_checkout_settings_admin_page() {
                     </label>
                 </div>
 
-                <h2>2. Returning Customer Preferences</h2>
+                <h2>2. Mobile Plan Summary &amp; Delivery Coverage Map Experience</h2>
+
+                <label style="font-weight:800; color:#0f172a; font-size:0.93rem; display:block; margin-bottom:10px;">Mobile Plan Summary Display on Steps 2 &amp; 3:</label>
+                <div class="mpc-radio-grid" data-radio-group="mobile-summary-mode">
+                    <label class="mpc-radio-card <?php echo $mobile_summary_mode === 'collapsible' ? 'is-selected' : ''; ?>">
+                        <input type="radio" name="mpc_mobile_summary_mode" value="collapsible" <?php checked( $mobile_summary_mode, 'collapsible' ); ?>>
+                        <span>
+                            <span class="mpc-radio-title">Compact Expandable Summary Bar on Steps 2 &amp; 3</span>
+                            <span class="mpc-radio-desc">Shows the full Plan Summary card on Step 1, then automatically condenses into a 1-line bar on Steps 2 and 3 on mobile screens (tapping the bar expands the full breakdown and promo code box anytime).</span>
+                        </span>
+                    </label>
+
+                    <label class="mpc-radio-card <?php echo $mobile_summary_mode === 'expanded' ? 'is-selected' : ''; ?>">
+                        <input type="radio" name="mpc_mobile_summary_mode" value="expanded" <?php checked( $mobile_summary_mode, 'expanded' ); ?>>
+                        <span>
+                            <span class="mpc-radio-title">Always Expanded Summary Card on All Steps</span>
+                            <span class="mpc-radio-desc">Keeps the full Plan Summary card expanded above the checkout form across Steps 1, 2, and 3 on mobile devices.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <label style="font-weight:800; color:#0f172a; font-size:0.93rem; display:block; margin-bottom:10px;">Delivery Coverage Map Button Behavior:</label>
+                <div class="mpc-radio-grid" data-radio-group="map-display-mode" style="margin-bottom:14px;">
+                    <label class="mpc-radio-card <?php echo $map_display_mode === 'modal' ? 'is-selected' : ''; ?>">
+                        <input type="radio" name="mpc_map_display_mode" value="modal" <?php checked( $map_display_mode, 'modal' ); ?>>
+                        <span>
+                            <span class="mpc-radio-title">In-Page Zoomable Map Popup Modal</span>
+                            <span class="mpc-radio-desc">Clicking "View Map" opens the Delivery Coverage Map inside an interactive popup modal with a 1-tap "Confirm Delivery Zone &amp; Close" button so customers never leave the checkout page.</span>
+                        </span>
+                    </label>
+
+                    <label class="mpc-radio-card <?php echo $map_display_mode === 'new_tab' ? 'is-selected' : ''; ?>">
+                        <input type="radio" name="mpc_map_display_mode" value="new_tab" <?php checked( $map_display_mode, 'new_tab' ); ?>>
+                        <span>
+                            <span class="mpc-radio-title">Open Coverage Map in New Browser Tab</span>
+                            <span class="mpc-radio-desc">Clicking "View Map" opens the Delivery Coverage Map URL directly in a new browser tab.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:20px;">
+                    <label style="font-weight:800; color:#0f172a; font-size:0.86rem; display:block; margin-bottom:6px;">Delivery Coverage Map Image / URL:</label>
+                    <input type="url" name="cmp_map_url" value="<?php echo esc_attr( $current_map_url ); ?>" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.9rem;" placeholder="https://mealplan.thecyclebistro.com/wp-content/uploads/2026/04/Coverage-Map.jpg">
+                </div>
+
+                <h2>3. Returning Customer Preferences</h2>
 
                 <label class="mpc-toggle-row">
                     <input type="checkbox" name="mpc_checkout_autofill_default" value="1" <?php checked( $autofill_default, '1' ); ?>>
@@ -512,10 +581,10 @@ function mpc_render_checkout_settings_admin_page() {
                 </label>
             </div>
 
-            <!-- SECTION 3: 4-WAY DELIVERY & STORE PICK-UP TIME SLOT MATRIX -->
+            <!-- SECTION 4: 4-WAY DELIVERY & STORE PICK-UP TIME SLOT MATRIX -->
             <div class="mpc-admin-card">
-                <h2>3. Delivery &amp; Store Pick-up Time Slots (4-Way Matrix)</h2>
-                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Assign the exact time slots offered on the checkout page for each combination of <strong>Delivery Method</strong> (Home/Office Delivery vs. Store Pick-up) and <strong>Receive By</strong> (Deliver Day Before vs. Deliver Same Day). All slots are shown below without scrolling so you can review every active checkbox at a glance.</p>
+                <h2>4. Delivery &amp; Store Pick-up Time Slots (4-Way Matrix)</h2>
+                <p style="color:#475569; margin-top:0; margin-bottom:16px;">Assign the exact time slots offered on the checkout page for each combination of <strong>Delivery Method</strong> (Home/Office Delivery vs. Store Pick-up) and <strong>Receive By</strong> (Deliver Day Before vs. Deliver Same Day).</p>
 
                 <div class="mpc-slots-builder-grid">
                     <?php foreach ( $slot_panels_meta as $panel ) :
@@ -566,9 +635,9 @@ function mpc_render_checkout_settings_admin_page() {
             </div>
         </form>
 
-        <!-- SECTION 4: UNPAID & PENDING SUBSCRIPTION RECORDS -->
+        <!-- SECTION 5: UNPAID & PENDING SUBSCRIPTION RECORDS -->
         <div class="mpc-admin-card" style="border-left: 5px solid #379237;">
-            <h2>4. Unpaid &amp; Pending Subscription Records</h2>
+            <h2>5. Unpaid &amp; Pending Subscription Records</h2>
             <p style="color:#334155; line-height:1.55; margin-top:0;">
                 <strong>✓ Active Protection:</strong> New subscriptions are created in <code>wp_cmp_subscriptions</code> <strong>only after payment is confirmed</strong> and the WooCommerce order status reaches <strong>Processing</strong> (or <strong>Completed</strong>). Failed, Cancelled, or Pending Payment orders do not create a subscription. Below is the list of any historical <code>status = 'pending'</code> records in the database so you can inspect and selectively delete them if needed.
             </p>
@@ -677,11 +746,14 @@ function mpc_render_checkout_settings_admin_page() {
     </div>
 
     <script>
-    document.querySelectorAll('#mpc-login-mode-cards input[type="radio"]').forEach(function(radio) {
+    document.querySelectorAll('.mpc-radio-grid input[type="radio"]').forEach(function(radio) {
         radio.addEventListener('change', function() {
-            document.querySelectorAll('#mpc-login-mode-cards .mpc-radio-card').forEach(function(c) {
-                c.classList.remove('is-selected');
-            });
+            const group = this.closest('.mpc-radio-grid');
+            if (group) {
+                group.querySelectorAll('.mpc-radio-card').forEach(function(c) {
+                    c.classList.remove('is-selected');
+                });
+            }
             if (this.checked) {
                 this.closest('.mpc-radio-card').classList.add('is-selected');
             }
@@ -748,7 +820,7 @@ function mpc_enqueue_assets() {
     global $post;
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'meal_plan_checkout' ) ) {
         $css_file = plugin_dir_path( __FILE__ ) . 'assets/mpc-style.css';
-        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.5.0';
+        $version  = file_exists( $css_file ) ? filemtime( $css_file ) : '4.6.0';
         wp_enqueue_style( 'mpc-wizard-styles', plugin_dir_url( __FILE__ ) . 'assets/mpc-style.css', array(), $version );
     }
 }
@@ -760,8 +832,11 @@ add_action( 'wp_ajax_nopriv_mpc_get_nonce', 'mpc_get_fresh_nonce' );
 add_action( 'wp_ajax_mpc_get_nonce',        'mpc_get_fresh_nonce' );
 function mpc_get_fresh_nonce() {
     wp_send_json_success( array(
-        'nonce'       => wp_create_nonce( 'mpc_checkout_nonce' ),
-        'slot_config' => mpc_get_configured_time_slots(),
+        'nonce'               => wp_create_nonce( 'mpc_checkout_nonce' ),
+        'slot_config'         => mpc_get_configured_time_slots(),
+        'mobile_summary_mode' => get_option( 'mpc_mobile_summary_mode', 'collapsible' ),
+        'map_display_mode'    => get_option( 'mpc_map_display_mode', 'modal' ),
+        'map_url'             => mpc_get_coverage_map_url(),
     ) );
 }
 
@@ -1055,7 +1130,7 @@ function mpc_ajax_check_email_exists() {
         wp_send_json_success( array( 'exists' => false ) );
     }
 
-    $is_staff = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
+    $is_staff     = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
     $deposit_meta = get_user_meta( $target_uid, '_cmp_deposit_held', true );
     if ( $deposit_meta === '' ) {
         $past_plans = $wpdb->get_var( $wpdb->prepare(
@@ -1119,7 +1194,6 @@ function mpc_process_order() {
         $categories = array( 'Breakfast', 'Lunch', 'Dinner', 'Snacks' );
     }
 
-    // ---- MAGIC LINK: OWN BAG TOKEN CHECK (VALIDATED NOW, CONSUMED UPON PAYMENT) ----
     $vip_token        = isset( $_POST['vip_token'] ) ? sanitize_text_field( $_POST['vip_token'] ) : '';
     $is_own_bag_token = false;
 
@@ -1130,7 +1204,6 @@ function mpc_process_order() {
         }
     }
 
-    // ---- SERVER-SIDE COUPON VALIDATION ----
     $discount_type          = '';
     $discount_label         = '';
     $coupon_used            = '';
@@ -1198,7 +1271,6 @@ function mpc_process_order() {
         $user_id = $logged_in_uid;
     }
 
-    // Evaluate Deposit Requirement for the Target User ID
     $deposit_meta = get_user_meta( $user_id, '_cmp_deposit_held', true );
     if ( $is_own_bag_token ) {
         $requires_deposit = false;
@@ -1220,13 +1292,11 @@ function mpc_process_order() {
         }
     }
 
-    // Check if the target customer already has another active/paused subscription
     $existing_active_subs = intval( $wpdb->get_var( $wpdb->prepare(
         "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')",
         $user_id
     ) ) );
 
-    // --- SAVE USER META (Preserves existing active plan's user_meta if multi-plan customer) ---
     wp_update_user( array( 'ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name ) );
     update_user_meta( $user_id, 'billing_first_name', $first_name );
     update_user_meta( $user_id, 'billing_last_name',  $last_name );
@@ -1244,7 +1314,6 @@ function mpc_process_order() {
         update_user_meta( $user_id, 'allergies',       $allergies );
     }
 
-    // --- CALCULATE PLAN DAYS & FINAL PLAN NAME FOR ORDER BLUEPRINT ---
     $days = intval( get_post_meta( $product_id, '_cmp_total_days', true ) );
     if ( $days <= 0 ) {
         $days = 30;
@@ -1263,7 +1332,6 @@ function mpc_process_order() {
 
     $full_delivery_address = implode( ', ', array_filter( array( $address_1, $address_2, 'Dubai' ) ) );
 
-    // --- CREATE WOOCOMMERCE ORDER (STATUS: PENDING PAYMENT) ---
     $order = wc_create_order( array( 'customer_id' => $user_id ) );
     $order->add_product( $product, 1 );
 
@@ -1281,7 +1349,6 @@ function mpc_process_order() {
     $order->set_address( $address, 'shipping' );
     $order->set_customer_note( $allergies );
 
-    // Store complete Subscription Blueprint in Order Meta (Provisioned ONLY when order reaches Processing / Completed)
     $order->update_meta_data( '_mpc_is_custom_checkout', '1' );
     $order->update_meta_data( '_cmp_plan_name',          $final_plan_name );
     $order->update_meta_data( '_cmp_total_days',         $days );
@@ -1309,7 +1376,6 @@ function mpc_process_order() {
         $order->add_order_note( 'Logistics Alert: Customer is using their OWN BAG. Do not issue a new thermal bag.' );
     }
 
-    // --- APPLY COUPON FEE (IF APPLICABLE) ---
     if ( ! empty( $coupon_used ) ) {
         $order->calculate_totals();
         $subtotal        = $order->get_subtotal();
@@ -1343,7 +1409,6 @@ function mpc_process_order() {
 
     $order->update_meta_data( '_cmp_discount_amount', $final_discount_to_save );
 
-    // --- NATIVE DEPOSIT INJECTION ---
     if ( $requires_deposit && ! $is_100_percent_free ) {
         $deposit_fee = new WC_Order_Item_Fee();
         $deposit_fee->set_name( 'Thermal Bag Deposit (Refundable)' );
@@ -1356,7 +1421,6 @@ function mpc_process_order() {
     $order->calculate_totals();
     $order->save();
 
-    // --- VIP 100% FREE BYPASS vs. N-GENIUS PAYMENT GATEWAY ---
     $final_order_total = (float) $order->get_total();
 
     if ( $final_order_total <= 0 ) {
@@ -1426,13 +1490,15 @@ function mpc_render_checkout_wizard() {
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $map_url    = get_option( 'cmp_map_url', '#' );
+    $map_url    = mpc_get_coverage_map_url();
 
     // Load Admin Checkout Settings
-    $login_ui_mode    = get_option( 'mpc_checkout_login_mode', 'l1' );
-    $autofill_default = ( get_option( 'mpc_checkout_autofill_default', '1' ) === '1' );
-    $email_guard_on   = ( get_option( 'mpc_checkout_email_guard', '1' ) === '1' );
-    $slot_config      = mpc_get_configured_time_slots();
+    $login_ui_mode       = get_option( 'mpc_checkout_login_mode', 'l1' );
+    $mobile_summary_mode = get_option( 'mpc_mobile_summary_mode', 'collapsible' );
+    $map_display_mode    = get_option( 'mpc_map_display_mode', 'modal' );
+    $autofill_default    = ( get_option( 'mpc_checkout_autofill_default', '1' ) === '1' );
+    $email_guard_on      = ( get_option( 'mpc_checkout_email_guard', '1' ) === '1' );
+    $slot_config         = mpc_get_configured_time_slots();
 
     $show_l1_bar      = in_array( $login_ui_mode, array( 'l1', 'both' ), true );
     $show_l3_tabs     = in_array( $login_ui_mode, array( 'l3', 'both' ), true );
@@ -1525,7 +1591,7 @@ function mpc_render_checkout_wizard() {
     <?php endif; ?>
 
     <style>
-        /* Theme-Proof Letter-Spacing Reset & Embedded Email Pill (Option EM-UI-1) */
+        /* Theme-Proof Reset & Embedded Email Pill */
         .mpc-checkout-container button,
         .mpc-checkout-container a,
         .mpc-checkout-container input,
@@ -1576,6 +1642,313 @@ function mpc_render_checkout_wizard() {
             background: #379237 !important;
             color: #ffffff !important;
             border-color: #1B5E20 !important;
+        }
+
+        /* Touch-Friendly 2-Button Segmented Pill Switchers (Option LOG-1) */
+        .mpc-segmented-control {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+            background: #e2e8f0 !important;
+            padding: 4px !important;
+            border-radius: 10px !important;
+            width: 100% !important;
+        }
+        .mpc-seg-pill {
+            background: transparent !important;
+            color: #475569 !important;
+            border: 1px solid transparent !important;
+            border-radius: 7px !important;
+            padding: 9px 8px !important;
+            font-size: 0.85rem !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 5px !important;
+            text-align: center !important;
+            white-space: nowrap !important;
+            transition: all 0.18s ease !important;
+            height: auto !important;
+            width: 100% !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+        }
+        .mpc-seg-pill:hover {
+            color: #1B5E20 !important;
+        }
+        .mpc-seg-pill.is-active {
+            background: #ffffff !important;
+            color: #1B5E20 !important;
+            border-color: #68B946 !important;
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+        }
+        .mpc-hidden-native-select {
+            display: none !important;
+        }
+
+        /* Non-Clipped Delivery Zone Confirmation Card & Visible View Map Button (Option MAP-1 / MAP-2) */
+        .mpc-zone-confirm-card {
+            background: #ffffff !important;
+            border: 1.5px solid #cbd5e1 !important;
+            border-left: 4px solid #379237 !important;
+            border-radius: 10px !important;
+            padding: 11px 14px !important;
+            margin-top: 12px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            flex-wrap: wrap !important;
+            gap: 10px 14px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+        }
+        .mpc-zone-confirm-card label.mpc-zone-check-label {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 10px !important;
+            cursor: pointer !important;
+            font-size: 0.88rem !important;
+            font-weight: 700 !important;
+            color: #1e293b !important;
+            line-height: 1.35 !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            margin: 0 !important;
+            flex: 1 1 210px !important;
+        }
+        .mpc-zone-confirm-card label.mpc-zone-check-label input[type="checkbox"] {
+            width: 19px !important;
+            height: 19px !important;
+            min-width: 19px !important;
+            margin: 0 !important;
+            accent-color: #379237 !important;
+            cursor: pointer !important;
+            flex-shrink: 0 !important;
+        }
+        .mpc-view-map-pill {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+            background: #EEF7E3 !important;
+            color: #1B5E20 !important;
+            border: 1.5px solid #68B946 !important;
+            border-radius: 8px !important;
+            padding: 7px 13px !important;
+            font-size: 0.81rem !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            text-decoration: none !important;
+            white-space: nowrap !important;
+            cursor: pointer !important;
+            flex-shrink: 0 !important;
+            height: auto !important;
+            width: auto !important;
+            margin: 0 !important;
+            transition: all 0.18s ease !important;
+            box-shadow: 0 2px 5px rgba(27, 94, 32, 0.08) !important;
+        }
+        .mpc-view-map-pill:hover {
+            background: #379237 !important;
+            color: #ffffff !important;
+            border-color: #1B5E20 !important;
+            transform: translateY(-1px);
+        }
+
+        /* Collapsible Mobile Plan Summary Bar on Steps 2 & 3 (Option SUM-1) */
+        .mpc-mobile-summary-bar {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            width: 100%;
+            cursor: pointer;
+            user-select: none;
+        }
+        .mpc-mob-sum-left {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+            flex: 1;
+        }
+        .mpc-mob-sum-plan {
+            font-size: 0.88rem;
+            font-weight: 800;
+            color: #1B5E20;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .mpc-mob-sum-total {
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        .mpc-mob-sum-toggle-pill {
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #68B946;
+            border-radius: 999px;
+            padding: 5px 11px;
+            font-size: 0.75rem;
+            font-weight: 800;
+            white-space: nowrap;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* In-Page Zoomable Coverage Map Lightbox Modal */
+        .mpc-map-modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.72);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            z-index: 100090;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+        }
+        .mpc-map-modal-backdrop.is-open {
+            display: flex !important;
+        }
+        .mpc-map-modal-dialog {
+            background: #ffffff;
+            border: 2px solid #DCECC9;
+            border-top: 5px solid #379237;
+            border-radius: 16px;
+            max-width: 780px;
+            width: 100%;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 24px 48px rgba(15, 23, 42, 0.35);
+        }
+        .mpc-map-modal-header {
+            padding: 14px 18px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .mpc-map-modal-header h4 {
+            margin: 0;
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #1B5E20;
+        }
+        .mpc-map-modal-close-x {
+            background: #e2e8f0 !important;
+            color: #334155 !important;
+            border: none !important;
+            border-radius: 50% !important;
+            width: 32px !important;
+            height: 32px !important;
+            font-size: 1.2rem !important;
+            font-weight: 800 !important;
+            line-height: 1 !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+        .mpc-map-modal-body {
+            padding: 12px;
+            overflow: auto;
+            text-align: center;
+            background: #f1f5f9;
+            flex: 1;
+            -webkit-overflow-scrolling: touch;
+        }
+        .mpc-map-modal-body img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            display: block;
+            margin: 0 auto;
+        }
+        .mpc-map-modal-footer {
+            padding: 12px 18px;
+            background: #ffffff;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .mpc-map-confirm-close-btn {
+            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important;
+            color: #ffffff !important;
+            border: none !important;
+            border-radius: 8px !important;
+            padding: 10px 18px !important;
+            font-size: 0.88rem !important;
+            font-weight: 800 !important;
+            cursor: pointer !important;
+            height: auto !important;
+            width: auto !important;
+            margin: 0 !important;
+        }
+
+        @media (max-width: 992px) {
+            .mpc-summary-area.is-mobile-collapsible-step {
+                padding: 12px 16px !important;
+            }
+            .mpc-summary-area.is-mobile-collapsible-step .mpc-mobile-summary-bar {
+                display: flex !important;
+            }
+            .mpc-summary-area.is-mobile-collapsible-step:not(.is-mobile-expanded) .mpc-summary-full-body {
+                display: none !important;
+            }
+            .mpc-summary-area.is-mobile-collapsible-step.is-mobile-expanded .mpc-summary-full-body {
+                display: block !important;
+                margin-top: 12px !important;
+                padding-top: 12px !important;
+                border-top: 1px solid #DCECC9 !important;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .mpc-logistics-switch-grid {
+                display: grid !important;
+                grid-template-columns: 1fr !important;
+                gap: 10px !important;
+            }
+            .mpc-seg-pill {
+                padding: 9px 10px !important;
+                font-size: 0.83rem !important;
+            }
+            .mpc-zone-confirm-card {
+                padding: 10px 12px !important;
+                gap: 8px 10px !important;
+            }
+            .mpc-zone-confirm-card label.mpc-zone-check-label {
+                font-size: 0.82rem !important;
+                flex: 1 1 100% !important;
+            }
+            .mpc-view-map-pill {
+                width: 100% !important;
+                justify-content: center !important;
+                padding: 8px 12px !important;
+            }
+            .mpc-map-confirm-close-btn {
+                width: 100% !important;
+                text-align: center !important;
+            }
         }
     </style>
 
@@ -1635,9 +2008,8 @@ function mpc_render_checkout_wizard() {
                         <div class="mpc-logged-bar-row-2">
                             <label class="mpc-autofill-check-label">
                                 <input type="checkbox" class="mpc-use-saved-details-cb" id="mpc_use_saved_details" <?php echo $autofill_default ? 'checked' : ''; ?>>
-                                <span>Auto-fill saved details</span>
+                                <span>Auto-fill my saved delivery details</span>
                             </label>
-                            <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -1716,9 +2088,8 @@ function mpc_render_checkout_wizard() {
                                     <div class="mpc-logged-bar-row-2">
                                         <label class="mpc-autofill-check-label">
                                             <input type="checkbox" class="mpc-use-saved-details-cb" <?php echo $autofill_default ? 'checked' : ''; ?>>
-                                            <span>Auto-fill saved details</span>
+                                            <span>Auto-fill my saved delivery details</span>
                                         </label>
-                                        <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
                                     </div>
                                 </div>
                             <?php endif; ?>
@@ -1805,9 +2176,8 @@ function mpc_render_checkout_wizard() {
                             <div class="mpc-logged-bar-row-2">
                                 <label class="mpc-autofill-check-label">
                                     <input type="checkbox" class="mpc-use-saved-details-cb" <?php echo $autofill_default ? 'checked' : ''; ?>>
-                                    <span>Auto-fill saved details</span>
+                                    <span>Auto-fill my saved delivery details</span>
                                 </label>
-                                <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -1870,18 +2240,39 @@ function mpc_render_checkout_wizard() {
                     </div>
                 </div>
 
+                <!-- =========================================================
+                     LOGISTICS CARD WITH 1-TAP SEGMENTED PILL SWITCHERS (LOG-1)
+                     & NON-CLIPPED DELIVERY ZONE + MAP BUTTON (MAP-1 / MAP-2)
+                     ========================================================= -->
                 <div class="mpc-logistics-card-group">
-                    <div class="mpc-form-row mpc-two-col-mobile" style="margin-bottom: 12px;">
+                    <div class="mpc-form-row mpc-logistics-switch-grid" style="margin-bottom: 12px;">
                         <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
                             <label>Delivery Method *</label>
-                            <select class="mpc-form-control" id="mpc_delivery_method">
+                            <div class="mpc-segmented-control" id="mpc-seg-method">
+                                <button type="button" class="mpc-seg-pill is-active" data-target="mpc_delivery_method" data-val="Delivery">
+                                    <span>&#128666; Delivery</span>
+                                </button>
+                                <button type="button" class="mpc-seg-pill" data-target="mpc_delivery_method" data-val="Pickup">
+                                    <span>&#127978; Store Pick-up</span>
+                                </button>
+                            </div>
+                            <select class="mpc-form-control mpc-hidden-native-select" id="mpc_delivery_method">
                                 <option value="Delivery">Home/Office Delivery</option>
                                 <option value="Pickup">Store Pick-up</option>
                             </select>
                         </div>
+
                         <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
                             <label>Receive by *</label>
-                            <select class="mpc-form-control" id="mpc_delivery_timing">
+                            <div class="mpc-segmented-control" id="mpc-seg-timing">
+                                <button type="button" class="mpc-seg-pill is-active" data-target="mpc_delivery_timing" data-val="Deliver Day Before">
+                                    <span>&#127769; Day Before</span>
+                                </button>
+                                <button type="button" class="mpc-seg-pill" data-target="mpc_delivery_timing" data-val="Deliver Same Day">
+                                    <span>&#9728;&#65039; Same Day</span>
+                                </button>
+                            </div>
+                            <select class="mpc-form-control mpc-hidden-native-select" id="mpc_delivery_timing">
                                 <option value="Deliver Day Before">Deliver Day Before</option>
                                 <option value="Deliver Same Day">Deliver Same Day</option>
                             </select>
@@ -1893,22 +2284,24 @@ function mpc_render_checkout_wizard() {
                             <label>Delivery / Pickup Time Slot *</label>
                             <select class="mpc-form-control" id="mpc_time_slot"></select>
                         </div>
-                        <div class="mpc-form-col mpc-form-group" style="margin-bottom: 0;">
-                            <div id="mpc_delivery_zone_container" class="mpc-logistics-box" style="margin-top: 23px;">
-                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; margin: 0; line-height: 1.35; font-size: 0.88rem;">
-                                    <input type="checkbox" id="mpc_delivery_zone_check" style="transform: scale(1.25); accent-color: #379237;">
-                                    <span>I confirm I am within the delivery zone (<a href="<?php echo esc_url( $map_url ); ?>" target="_blank" style="color: #379237; text-decoration: underline;">View Map</a>) *</span>
-                                </label>
-                            </div>
-                            <div id="mpc_pickup_branch_container" style="display: none;">
-                                <label>Select Pickup Branch *</label>
-                                <select class="mpc-form-control" id="mpc_pickup_branch">
-                                    <option value="">- Select Branch -</option>
-                                    <option value="Jumeirah">Jumeirah</option>
-                                    <option value="Motor City">Motor City</option>
-                                </select>
-                            </div>
+                        <div class="mpc-form-col mpc-form-group" id="mpc_pickup_branch_container" style="display: none; margin-bottom: 0;">
+                            <label>Select Pickup Branch *</label>
+                            <select class="mpc-form-control" id="mpc_pickup_branch">
+                                <option value="">- Select Branch -</option>
+                                <option value="Jumeirah">Jumeirah</option>
+                                <option value="Motor City">Motor City</option>
+                            </select>
                         </div>
+                    </div>
+
+                    <div id="mpc_delivery_zone_container" class="mpc-zone-confirm-card">
+                        <label class="mpc-zone-check-label" for="mpc_delivery_zone_check">
+                            <input type="checkbox" id="mpc_delivery_zone_check">
+                            <span>I confirm my address is within the delivery zone *</span>
+                        </label>
+                        <a href="<?php echo esc_url( $map_url ); ?>" target="_blank" rel="noopener noreferrer" id="mpc-view-map-trigger" class="mpc-view-map-pill">
+                            <span>&#128506;&#65039; View Coverage Map</span>
+                        </a>
                     </div>
                 </div>
 
@@ -1946,29 +2339,65 @@ function mpc_render_checkout_wizard() {
         </div>
 
         <!-- =========================================================
-             PLAN SUMMARY AREA (WITH PERSISTENT COUPON CODE & STEP 1 NEXT CTA)
+             PLAN SUMMARY AREA (WITH MOBILE COLLAPSIBLE BAR & COUPON BOX)
              ========================================================= -->
         <div class="mpc-summary-area" id="mpc-summary-card">
-            <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
-            <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
-
-            <div id="mpc-coupon-section" class="mpc-summary-coupon-box" style="display: none;">
-                <label class="mpc-summary-coupon-label">&#127903;&#65039; Have a Discount Code?</label>
-                <div class="mpc-summary-coupon-row">
-                    <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Promo code" style="text-transform: uppercase;">
-                    <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn mpc-summary-apply-btn">Apply</button>
+            <div class="mpc-mobile-summary-bar" id="mpc-mobile-summary-toggle">
+                <div class="mpc-mob-sum-left">
+                    <span class="mpc-mob-sum-plan" id="mpc-mob-sum-plan-name">Select a Plan</span>
+                    <span class="mpc-mob-sum-total" id="mpc-mob-sum-total-val">AED 0.00</span>
                 </div>
-                <div id="mpc-coupon-feedback" style="margin-top: 6px; font-size: 0.84em; font-weight: 700;"></div>
+                <span class="mpc-mob-sum-toggle-pill">
+                    <span>&#127903;&#65039; Promo / Details</span>
+                    <span id="mpc-mob-sum-arrow">&#9662;</span>
+                </span>
             </div>
 
-            <div id="mpc-summary-logistics" style="display: none; margin-top: 14px; padding-top: 12px; border-top: 1px dashed #ddd; font-size: 0.9em; line-height: 1.45;">
-                <strong>Method:</strong> <span id="sum-method"></span><br>
-                <strong>Receive By:</strong> <span id="sum-timing"></span>
-            </div>
+            <div class="mpc-summary-full-body">
+                <h3 style="margin-top: 0; border-bottom: 2px solid #ddd; padding-bottom: 10px;">Plan Summary</h3>
+                <div id="mpc-summary-content"><p style="color: #666; font-style: italic;">Please select a plan from Step 1.</p></div>
 
-            <button type="button" id="btn-summary-next-1" class="mpc-btn mpc-btn-next mpc-summary-next-btn" onclick="mpcChangeStep(1)" style="display: none;">
-                Next: Delivery Details &rarr;
-            </button>
+                <div id="mpc-coupon-section" class="mpc-summary-coupon-box" style="display: none;">
+                    <label class="mpc-summary-coupon-label">&#127903;&#65039; Have a Discount Code?</label>
+                    <div class="mpc-summary-coupon-row">
+                        <input type="text" id="mpc_coupon_input" class="mpc-form-control" placeholder="Promo code" style="text-transform: uppercase;">
+                        <button type="button" id="mpc-apply-coupon-btn" class="mpc-btn mpc-summary-apply-btn">Apply</button>
+                    </div>
+                    <div id="mpc-coupon-feedback" style="margin-top: 6px; font-size: 0.84em; font-weight: 700;"></div>
+                </div>
+
+                <div id="mpc-summary-logistics" style="display: none; margin-top: 14px; padding-top: 12px; border-top: 1px dashed #ddd; font-size: 0.9em; line-height: 1.45;">
+                    <strong>Method:</strong> <span id="sum-method"></span><br>
+                    <strong>Receive By:</strong> <span id="sum-timing"></span>
+                </div>
+
+                <button type="button" id="btn-summary-next-1" class="mpc-btn mpc-btn-next mpc-summary-next-btn" onclick="mpcChangeStep(1)" style="display: none;">
+                    Next: Delivery Details &rarr;
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- =========================================================
+         IN-PAGE ZOOMABLE DELIVERY COVERAGE MAP MODAL
+         ========================================================= -->
+    <div id="mpc-coverage-map-modal" class="mpc-map-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="mpc-map-modal-title">
+        <div class="mpc-map-modal-dialog">
+            <div class="mpc-map-modal-header">
+                <h4 id="mpc-map-modal-title">&#128506;&#65039; Dubai Delivery Coverage Map</h4>
+                <button type="button" class="mpc-map-modal-close-x" id="mpc-close-map-modal" aria-label="Close Map">&times;</button>
+            </div>
+            <div class="mpc-map-modal-body">
+                <img id="mpc-map-modal-img" src="<?php echo esc_url( $map_url ); ?>" alt="Delivery Coverage Map">
+            </div>
+            <div class="mpc-map-modal-footer">
+                <a href="<?php echo esc_url( $map_url ); ?>" target="_blank" rel="noopener noreferrer" id="mpc-map-external-link" style="color:#1B5E20; font-weight:800; font-size:0.84rem; text-decoration:underline;">
+                    Open Full Map in New Tab &nearr;
+                </a>
+                <button type="button" id="mpc-confirm-zone-modal-btn" class="mpc-map-confirm-close-btn">
+                    &#10003; I'm Within the Zone &mdash; Confirm &amp; Close
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1986,6 +2415,9 @@ function mpc_render_checkout_wizard() {
         let activeVipToken        = '';
         let autoFillOnLogin       = <?php echo $autofill_default ? 'true' : 'false'; ?>;
         let emailGuardEnabled     = <?php echo $email_guard_on ? 'true' : 'false'; ?>;
+        let mpcMobileSummaryMode  = '<?php echo esc_js( $mobile_summary_mode ); ?>';
+        let mpcMapDisplayMode     = '<?php echo esc_js( $map_display_mode ); ?>';
+        let mpcMapUrl             = '<?php echo esc_js( $map_url ); ?>';
 
         // 4-Way Configured Time Slot Matrix (Synced via Live AJAX on Page Load)
         let mpcSlotConfig = <?php echo wp_json_encode( $slot_config ); ?>;
@@ -2024,7 +2456,6 @@ function mpc_render_checkout_wizard() {
             }, 3800);
         }
 
-        // Normalize saved timing strings ("Day Before" -> "Deliver Day Before", "Same Day" -> "Deliver Same Day")
         function mpcNormalizeTimingValue(rawVal) {
             if (!rawVal) return 'Deliver Day Before';
             const str = String(rawVal).toLowerCase();
@@ -2034,7 +2465,96 @@ function mpc_render_checkout_wizard() {
             return 'Deliver Day Before';
         }
 
-        // Uncached AJAX Sync for Fresh Nonce & Live 4-Way Time Slot Matrix
+        // Sync Segmented Pill Buttons with Native Select Values
+        function mpcSyncSegmentedPills() {
+            const methodVal = document.getElementById('mpc_delivery_method').value;
+            const timingVal = mpcNormalizeTimingValue(document.getElementById('mpc_delivery_timing').value);
+
+            document.querySelectorAll('#mpc-seg-method .mpc-seg-pill').forEach(btn => {
+                btn.classList.toggle('is-active', btn.getAttribute('data-val') === methodVal);
+            });
+            document.querySelectorAll('#mpc-seg-timing .mpc-seg-pill').forEach(btn => {
+                btn.classList.toggle('is-active', btn.getAttribute('data-val') === timingVal);
+            });
+        }
+
+        document.querySelectorAll('.mpc-segmented-control .mpc-seg-pill').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const targetId = this.getAttribute('data-target');
+                const val      = this.getAttribute('data-val');
+                const selEl    = document.getElementById(targetId);
+                if (selEl && selEl.value !== val) {
+                    selEl.value = val;
+                    selEl.dispatchEvent(new Event('change'));
+                }
+                mpcSyncSegmentedPills();
+            });
+        });
+
+        // Sync Mobile Collapsible Summary State on Steps 2 & 3
+        function mpcSyncMobileSummaryMode() {
+            const sumCard = document.getElementById('mpc-summary-card');
+            if (!sumCard) return;
+            if (mpcMobileSummaryMode === 'collapsible' && currentStep > 1 && checkoutData.productId) {
+                sumCard.classList.add('is-mobile-collapsible-step');
+            } else {
+                sumCard.classList.remove('is-mobile-collapsible-step', 'is-mobile-expanded');
+            }
+        }
+
+        let mobSumToggle = document.getElementById('mpc-mobile-summary-toggle');
+        if (mobSumToggle) {
+            mobSumToggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                const sumCard = document.getElementById('mpc-summary-card');
+                const arrow   = document.getElementById('mpc-mob-sum-arrow');
+                if (!sumCard) return;
+                const willExpand = !sumCard.classList.contains('is-mobile-expanded');
+                sumCard.classList.toggle('is-mobile-expanded', willExpand);
+                if (arrow) arrow.innerHTML = willExpand ? '&#9652;' : '&#9662;';
+            });
+        }
+
+        // Coverage Map Trigger (Modal vs. New Tab based on Checkout Settings)
+        let viewMapTrigger = document.getElementById('mpc-view-map-trigger');
+        let mapModal       = document.getElementById('mpc-coverage-map-modal');
+        if (viewMapTrigger) {
+            viewMapTrigger.addEventListener('click', function(e) {
+                if (mpcMapDisplayMode === 'modal' && mapModal) {
+                    e.preventDefault();
+                    mapModal.classList.add('is-open');
+                }
+            });
+        }
+
+        let closeMapBtn = document.getElementById('mpc-close-map-modal');
+        if (closeMapBtn && mapModal) {
+            closeMapBtn.addEventListener('click', function() {
+                mapModal.classList.remove('is-open');
+            });
+        }
+        if (mapModal) {
+            mapModal.addEventListener('click', function(e) {
+                if (e.target === mapModal) {
+                    mapModal.classList.remove('is-open');
+                }
+            });
+        }
+        let confirmZoneModalBtn = document.getElementById('mpc-confirm-zone-modal-btn');
+        if (confirmZoneModalBtn) {
+            confirmZoneModalBtn.addEventListener('click', function() {
+                const zCheck = document.getElementById('mpc_delivery_zone_check');
+                if (zCheck) {
+                    zCheck.checked = true;
+                    mpcSaveState();
+                }
+                if (mapModal) mapModal.classList.remove('is-open');
+                mpcShowNotice('Delivery zone confirmed!', 'success');
+            });
+        }
+
+        // Uncached AJAX Sync for Fresh Nonce, Live 4-Way Time Slots & UX Modes
         let _mpcFreshNonce = null;
         fetch('<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', {
             method: 'POST',
@@ -2050,6 +2570,21 @@ function mpc_render_checkout_wizard() {
                     mpcSlotConfig = response.data.slot_config;
                     mpcAdjustTimingOptions();
                     updateLogisticsSummary();
+                }
+                if (response.data.mobile_summary_mode) {
+                    mpcMobileSummaryMode = response.data.mobile_summary_mode;
+                    mpcSyncMobileSummaryMode();
+                }
+                if (response.data.map_display_mode) {
+                    mpcMapDisplayMode = response.data.map_display_mode;
+                }
+                if (response.data.map_url) {
+                    mpcMapUrl = response.data.map_url;
+                    if (viewMapTrigger) viewMapTrigger.href = mpcMapUrl;
+                    let modalImg = document.getElementById('mpc-map-modal-img');
+                    if (modalImg) modalImg.src = mpcMapUrl;
+                    let extLink = document.getElementById('mpc-map-external-link');
+                    if (extLink) extLink.href = mpcMapUrl;
                 }
             }
         });
@@ -2108,6 +2643,12 @@ function mpc_render_checkout_wizard() {
             let discountedPrice = basePrice - discountAmt;
             let depositAmt = (requiresDeposit && !is100PercentFree) ? 150 : 0;
             let newTotal = discountedPrice + depositAmt;
+
+            // Update Compact Mobile Summary Header Bar
+            let mobPlanEl  = document.getElementById('mpc-mob-sum-plan-name');
+            let mobTotalEl = document.getElementById('mpc-mob-sum-total-val');
+            if (mobPlanEl)  mobPlanEl.textContent  = '\ud83d\udccb ' + checkoutData.planName;
+            if (mobTotalEl) mobTotalEl.textContent = 'Total: AED ' + newTotal.toFixed(2);
 
             let html = `<div style="margin-bottom: 12px;"><strong>Plan:</strong><br><span style="color: #379237; font-size: 1.08em; font-weight: 700;">${checkoutData.planName}</span></div>`;
             html += `<div style="padding-top: 12px; border-top: 1px dashed #ddd; font-size: 0.94em;">`;
@@ -2220,7 +2761,7 @@ function mpc_render_checkout_wizard() {
             });
         }
 
-        // ---- 4-WAY DYNAMIC TIME SLOT BUILDER (DELIVERY / PICKUP x DAY BEFORE / SAME DAY) ----
+        // ---- 4-WAY DYNAMIC TIME SLOT BUILDER ----
         function mpcAdjustTimingOptions() {
             const methodEl       = document.getElementById('mpc_delivery_method');
             const timingEl       = document.getElementById('mpc_delivery_timing');
@@ -2232,6 +2773,8 @@ function mpc_render_checkout_wizard() {
             if (timingEl.value !== normalizedT) {
                 timingEl.value = normalizedT;
             }
+
+            mpcSyncSegmentedPills();
 
             const previousVal = timeSlotSelect.value;
             const isSameDay   = (normalizedT.toLowerCase().indexOf('same day') !== -1);
@@ -2423,7 +2966,6 @@ function mpc_render_checkout_wizard() {
                 ef.readOnly = true;
                 ef.classList.add('is-locked-email');
 
-                // Ensure the embedded Change pill exists inside .mpc-email-input-wrap
                 let wrapEl = ef.closest('.mpc-email-input-wrap');
                 if (wrapEl && !document.getElementById('mpc-inline-email-toggle')) {
                     let pillBtn = document.createElement('button');
@@ -2451,9 +2993,8 @@ function mpc_render_checkout_wizard() {
                 <div class="mpc-logged-bar-row-2">
                     <label class="mpc-autofill-check-label">
                         <input type="checkbox" class="mpc-use-saved-details-cb" ${checkedAttr}>
-                        <span>Auto-fill saved details</span>
+                        <span>Auto-fill my saved delivery details</span>
                     </label>
-                    <button type="button" class="mpc-diff-email-trigger mpc-switch-email-link">&#9998; Use different email</button>
                 </div>`;
 
             let topBar = document.getElementById('mpc-top-account-bar');
@@ -2877,12 +3418,14 @@ function mpc_render_checkout_wizard() {
         }
 
         document.getElementById('mpc_delivery_method').addEventListener('change', function() {
+            let zoneCard  = document.getElementById('mpc_delivery_zone_container');
+            let pickupBox = document.getElementById('mpc_pickup_branch_container');
             if (this.value === 'Delivery') {
-                document.getElementById('mpc_delivery_zone_container').style.display = 'block';
-                document.getElementById('mpc_pickup_branch_container').style.display = 'none';
+                if (zoneCard) zoneCard.style.setProperty('display', 'flex', 'important');
+                if (pickupBox) pickupBox.style.display = 'none';
             } else {
-                document.getElementById('mpc_delivery_zone_container').style.display = 'none';
-                document.getElementById('mpc_pickup_branch_container').style.display = 'block';
+                if (zoneCard) zoneCard.style.setProperty('display', 'none', 'important');
+                if (pickupBox) pickupBox.style.display = 'block';
             }
             mpcAdjustTimingOptions();
             updateLogisticsSummary();
@@ -2920,7 +3463,7 @@ function mpc_render_checkout_wizard() {
                 }
                 let method = document.getElementById('mpc_delivery_method').value;
                 if (method === 'Delivery' && !document.getElementById('mpc_delivery_zone_check').checked) {
-                    mpcShowNotice('Please confirm you are within the delivery zone to proceed.', 'error');
+                    mpcShowNotice('Please confirm your address is within the delivery zone to proceed.', 'error');
                     return;
                 }
                 if (method === 'Pickup' && !document.getElementById('mpc_pickup_branch').value) {
@@ -2948,6 +3491,8 @@ function mpc_render_checkout_wizard() {
             if (sumNextBtn) {
                 sumNextBtn.style.display = (currentStep === 1 && checkoutData.productId) ? 'block' : 'none';
             }
+
+            mpcSyncMobileSummaryMode();
 
             let indicators = document.getElementsByClassName('mpc-step-indicator');
             for (let i = 0; i < indicators.length; i++) {
