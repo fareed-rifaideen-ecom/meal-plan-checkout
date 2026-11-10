@@ -1,271 +1,1240 @@
 /* ======================================================================
-   MEAL PLAN CHECKOUT - CORE STYLES & DESKTOP UI
-   ====================================================================== */
+MEAL PLAN CHECKOUT - CORE STYLES, DESKTOP, TABLET & MOBILE UI (v4.6.0)
+====================================================================== */
 
 :root {
-    --mpc-primary: #379237;
-    --mpc-primary-hover: #2d7a2d;
-    --mpc-secondary: #46b450;
-    --mpc-bg-light: #f8fafc;
-    --mpc-border: #e2e8f0;
-    --mpc-text-main: #1e293b;
-    --mpc-text-muted: #64748b;
-    --mpc-radius: 12px;
+--mpc-primary: #379237;
+--mpc-primary-dark: #1B5E20;
+--mpc-primary-hover: #2d7a2d;
+--mpc-secondary: #46b450;
+--mpc-accent-light: #EEF7E3;
+--mpc-accent-border: #DCECC9;
+--mpc-bg-light: #f8fafc;
+--mpc-border: #e2e8f0;
+--mpc-text-main: #1e293b;
+--mpc-text-muted: #64748b;
+--mpc-radius: 12px;
 }
 
-/* Base Container */
+/* Base Container & Theme-Proof Reset */
 .mpc-checkout-container {
-    max-width: 1150px;
-    margin: 30px auto;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    display: flex;
-    align-items: flex-start; 
-    gap: 30px;
-    padding: 0 0px;
-    box-sizing: border-box;
-    color: var(--mpc-text-main);
+max-width: 1150px;
+margin: 30px auto;
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+display: flex;
+align-items: flex-start;
+gap: 30px;
+padding: 0;
+box-sizing: border-box;
+color: var(--mpc-text-main);
+letter-spacing: normal;
+}
+.mpc-checkout-container *,
+.mpc-checkout-container *::before,
+.mpc-checkout-container *::after {
+box-sizing: border-box;
+}
+
+/* Prevent WordPress Theme from Injecting Wide Letter-Spacing on Buttons & Inputs */
+.mpc-checkout-container button,
+.mpc-checkout-container a,
+.mpc-checkout-container label,
+.mpc-checkout-container input,
+.mpc-checkout-container select,
+.mpc-checkout-container textarea {
+letter-spacing: normal !important;
+text-transform: none !important;
+font-family: inherit;
+}
+
+/* Prevent WordPress Twemoji / SVG icons from stretching */
+.mpc-checkout-container img.emoji,
+.mpc-checkout-container img.wp-smiley {
+width: 1em !important;
+height: 1em !important;
+max-width: 16px !important;
+max-height: 16px !important;
+display: inline-block !important;
+vertical-align: -0.15em !important;
+margin: 0 2px !important;
 }
 
 .mpc-wizard-area {
-    flex: 1; 
-    min-width: 0; 
-    background: #ffffff;
-    border: 1px solid var(--mpc-border);
-    border-radius: var(--mpc-radius);
-    padding: 30px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+flex: 1;
+min-width: 0;
+background: #ffffff;
+border: 1px solid var(--mpc-border);
+border-radius: var(--mpc-radius);
+padding: 28px 30px;
+box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
 }
 
 .mpc-summary-area {
-    flex: 0 0 320px; 
-    width: 320px;
-    background: var(--mpc-bg-light);
-    border: 1px solid var(--mpc-border);
-    border-radius: var(--mpc-radius);
-    padding: 25px;
-    position: sticky;
-    top: 30px; 
+flex: 0 0 330px;
+width: 330px;
+background: var(--mpc-bg-light);
+border: 1.5px solid var(--mpc-accent-border);
+border-radius: var(--mpc-radius);
+padding: 22px 24px;
+position: sticky;
+top: 28px;
+box-shadow: 0 6px 18px rgba(27, 94, 32, 0.05);
 }
 
-/* Progress Bar */
+/* ======================================================================
+
+PERSISTENT TOP ACCOUNT & SIGN-IN BAR + STEP 1 CUSTOMER TYPE TABS
+====================================================================== */
+.mpc-top-account-bar {
+background: linear-gradient(135deg, #f8fafc 0%, #f0fdf4 100%);
+border: 1.5px solid var(--mpc-accent-border);
+border-left: 5px solid var(--mpc-primary);
+border-radius: 12px;
+padding: 13px 16px;
+margin-bottom: 20px;
+box-shadow: 0 4px 12px rgba(27, 94, 32, 0.05);
+transition: all 0.2s ease;
+}
+.mpc-top-account-bar.is-logged-in {
+background: linear-gradient(135deg, #f0fdf4 0%, #EEF7E3 100%);
+border-color: #86efac;
+border-left: 5px solid var(--mpc-primary-dark);
+padding: 12px 16px;
+}
+
+/* Logged-Out Bar Header */
+.mpc-account-bar-header {
+display: flex;
+align-items: center;
+justify-content: space-between;
+flex-wrap: wrap;
+gap: 10px;
+}
+.mpc-account-bar-title {
+font-size: 0.94rem;
+color: var(--mpc-text-main);
+font-weight: 700;
+display: flex;
+align-items: center;
+flex-wrap: wrap;
+gap: 6px 10px;
+line-height: 1.35;
+}
+.mpc-account-bar-sub {
+font-weight: 500;
+color: #475569;
+font-size: 0.86rem;
+}
+.mpc-account-toggle-btn {
+background: var(--mpc-primary) !important;
+color: #ffffff !important;
+border: none !important;
+border-radius: 8px !important;
+padding: 7px 14px !important;
+font-size: 0.84rem !important;
+font-weight: 800 !important;
+cursor: pointer !important;
+transition: all 0.2s ease !important;
+text-decoration: none !important;
+display: inline-flex !important;
+align-items: center !important;
+gap: 6px !important;
+white-space: nowrap !important;
+height: auto !important;
+width: auto !important;
+margin: 0 !important;
+flex-shrink: 0 !important;
+}
+.mpc-account-toggle-btn:hover {
+background: var(--mpc-primary-dark) !important;
+transform: translateY(-1px);
+}
+
+/* Logged-In 2-Row Compact Layout */
+.mpc-logged-bar-row-1 {
+display: flex;
+align-items: center;
+justify-content: space-between;
+flex-wrap: wrap;
+gap: 8px;
+}
+.mpc-welcome-name {
+color: var(--mpc-primary-dark);
+font-size: 0.95rem;
+font-weight: 700;
+line-height: 1.25;
+}
+.mpc-deposit-waived-pill {
+display: inline-flex;
+align-items: center;
+gap: 4px;
+background: #dcfce7;
+color: #166534;
+border: 1px solid #86efac;
+padding: 3px 10px;
+border-radius: 999px;
+font-size: 0.75rem;
+font-weight: 800;
+white-space: nowrap;
+line-height: 1.2;
+}
+.mpc-logged-bar-row-2 {
+display: flex;
+align-items: center;
+justify-content: space-between;
+flex-wrap: wrap;
+gap: 8px 12px;
+margin-top: 8px;
+padding-top: 8px;
+border-top: 1px dashed rgba(27, 94, 32, 0.2);
+}
+.mpc-autofill-check-label {
+display: inline-flex !important;
+align-items: center !important;
+gap: 7px !important;
+font-size: 0.84rem !important;
+font-weight: 700 !important;
+color: var(--mpc-primary-dark) !important;
+cursor: pointer !important;
+margin: 0 !important;
+line-height: 1.2 !important;
+white-space: normal !important;
+}
+.mpc-autofill-check-label input[type="checkbox"] {
+width: 16px !important;
+height: 16px !important;
+margin: 0 !important;
+accent-color: var(--mpc-primary) !important;
+cursor: pointer !important;
+flex-shrink: 0 !important;
+}
+
+/* Inline Auth Drawer & Forgot Password */
+.mpc-inline-auth-drawer {
+display: none;
+margin-top: 12px;
+padding-top: 12px;
+border-top: 1px dashed #cbd5e1;
+}
+.mpc-inline-auth-grid {
+display: grid;
+grid-template-columns: 1fr 1fr auto;
+gap: 10px;
+align-items: center;
+}
+.mpc-inline-forgot-grid {
+display: grid;
+grid-template-columns: 1fr auto;
+gap: 10px;
+align-items: center;
+}
+.mpc-auth-submit-btn {
+background: var(--mpc-primary) !important;
+color: #fff !important;
+height: 44px !important;
+padding: 0 20px !important;
+font-size: 0.9rem !important;
+font-weight: 800 !important;
+white-space: nowrap !important;
+width: auto !important;
+margin: 0 !important;
+}
+.mpc-auth-reset-btn {
+background: #334155 !important;
+color: #fff !important;
+height: 44px !important;
+padding: 0 18px !important;
+font-size: 0.88rem !important;
+font-weight: 800 !important;
+white-space: nowrap !important;
+width: auto !important;
+margin: 0 !important;
+}
+.mpc-auth-links-row {
+display: flex;
+justify-content: space-between;
+align-items: center;
+flex-wrap: wrap;
+gap: 8px;
+margin-top: 8px;
+font-size: 0.83rem;
+}
+.mpc-auth-err-msg {
+color: #e11d48;
+font-weight: 700;
+}
+.mpc-auth-link {
+color: var(--mpc-primary-dark) !important;
+font-weight: 700;
+text-decoration: underline !important;
+}
+.mpc-auth-help-text {
+margin: 0 0 10px 0;
+font-size: 0.85rem;
+color: #475569;
+}
+
+/* Step 1 Customer Type Tabs (New vs. Returning) */
+.mpc-l3-mode-tabs {
+display: grid;
+grid-template-columns: repeat(2, minmax(0, 1fr));
+gap: 8px;
+background: #f1f5f9;
+padding: 5px;
+border-radius: 12px;
+border: 1px solid #cbd5e1;
+margin-bottom: 18px;
+}
+.mpc-l3-tab-btn {
+background: transparent !important;
+color: #475569 !important;
+border: 1px solid transparent !important;
+border-radius: 9px !important;
+padding: 10px 12px !important;
+font-size: 0.9rem !important;
+font-weight: 800 !important;
+cursor: pointer !important;
+transition: all 0.2s ease !important;
+display: flex !important;
+align-items: center !important;
+justify-content: center !important;
+gap: 6px !important;
+text-align: center !important;
+line-height: 1.25 !important;
+height: auto !important;
+margin: 0 !important;
+}
+.mpc-l3-tab-btn.active {
+background: #ffffff !important;
+color: var(--mpc-primary-dark) !important;
+box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08) !important;
+border-color: var(--mpc-accent-border) !important;
+}
+.mpc-l3-returning-panel {
+display: none;
+background: #ffffff;
+border: 1.5px solid var(--mpc-accent-border);
+border-top: 4px solid var(--mpc-primary);
+border-radius: 14px;
+padding: 20px;
+margin-bottom: 20px;
+box-shadow: 0 8px 22px rgba(27, 94, 32, 0.06);
+}
+
+/* ======================================================================
+2. PROGRESS BAR & STEP ANIMATIONS
+====================================================================== */
 .mpc-progress {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 40px;
-    position: relative;
+display: flex;
+justify-content: space-between;
+margin-bottom: 28px;
+position: relative;
 }
 .mpc-progress::before {
-    content: '';
-    position: absolute;
-    top: 15px;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: #e2e8f0;
-    z-index: 1;
+content: '';
+position: absolute;
+top: 15px;
+left: 0;
+right: 0;
+height: 3px;
+background: #e2e8f0;
+z-index: 1;
 }
 .mpc-step-indicator {
-    position: relative;
-    z-index: 2;
-    text-align: center;
-    width: 33.33%;
-    font-size: 0.85em;
-    font-weight: 600;
-    color: var(--mpc-text-muted);
+position: relative;
+z-index: 2;
+text-align: center;
+width: 33.33%;
+font-size: 0.85em;
+font-weight: 600;
+color: var(--mpc-text-muted);
 }
 .mpc-step-circle {
-    width: 32px;
-    height: 32px;
-    background: #f1f5f9;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 10px auto;
-    border: 4px solid #ffffff;
-    transition: all 0.3s ease;
-    color: #94a3b8;
+width: 32px;
+height: 32px;
+background: #f1f5f9;
+border-radius: 50%;
+display: flex;
+align-items: center;
+justify-content: center;
+margin: 0 auto 8px auto;
+border: 4px solid #ffffff;
+transition: all 0.3s ease;
+color: #94a3b8;
+font-weight: 800;
 }
 .mpc-step-indicator.active .mpc-step-circle {
-    background: var(--mpc-primary);
-    color: #ffffff;
+background: var(--mpc-primary);
+color: #ffffff;
 }
 .mpc-step-indicator.completed .mpc-step-circle {
-    background: var(--mpc-secondary);
-    color: #ffffff;
+background: var(--mpc-secondary);
+color: #ffffff;
 }
 
-/* Step Content Animations */
 .mpc-step-content {
-    display: none;
-    animation: fadeIn 0.4s ease-out;
+display: none;
+animation: fadeIn 0.35s ease-out;
 }
 .mpc-step-content.active { display: block; }
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(15px); }
-    to { opacity: 1; transform: translateY(0); }
+from { opacity: 0; transform: translateY(10px); }
+to { opacity: 1; transform: translateY(0); }
 }
-
-/* Grid & Tiles - DESKTOP */
-.mpc-cat-header {
-    margin: 30px 0 15px 0;
-    color: var(--mpc-text-main);
-    border-bottom: 2px solid var(--mpc-border);
-    padding-bottom: 8px;
-    font-size: 1.3em;
-    font-weight: 700;
-}
-.mpc-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
-}
-.mpc-tile {
-    border: 2px solid var(--mpc-border);
-    border-radius: var(--mpc-radius);
-    padding: 20px 10px; /* Reduced to give text breathing room */
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    background: #ffffff;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    min-height: 120px; 
-}
-.mpc-tile:hover {
-    border-color: var(--mpc-primary);
-}
-.mpc-tile.selected {
-    border-color: var(--mpc-primary);
-    background: #f4fdf4;
-    position: relative;
-}
-.mpc-tile.selected::after {
-    content: '✓';
-    position: absolute;
-    top: -10px;
-    right: -10px;
-    background: var(--mpc-primary);
-    color: #fff;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-}
-.mpc-tile-title {
-    font-size: 1.05em; /* Correctly scaled for desktop tiles */
-    font-weight: 700;
-    margin-bottom: 8px;
-    line-height: 1.3;
-    color: #334155;
-    word-wrap: break-word;
-}
-.mpc-tile-price {
-    font-size: 1.3em;
-    color: var(--mpc-primary);
-    font-weight: 800;
-}
-.mpc-tile-desc {
-    font-size: 0.9em;
-    color: #64748b;
-    margin-top: 10px;
-}
-
-/* Box Styling */
-.mpc-login-box, .mpc-welcome-box {
-    background: #f8fafc;
-    padding: 20px;
-    border-radius: 8px;
-    border: 1px solid #cbd5e1;
-    margin-bottom: 25px;
-}
-.mpc-welcome-box { background: #f4fdf4; border-color: #379237; }
-
-/* Form Styling */
-.mpc-form-control {
-    width: 100%;
-    padding: 14px 16px;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    box-sizing: border-box;
-    font-size: 1em;
-}
-.mpc-form-row { display: flex; gap: 20px; width: 100%; flex-wrap: wrap; margin-bottom: 10px; }
-.mpc-form-col { flex: 1; min-width: 200px; }
-.mpc-logistics-box { padding: 15px; background: #f1f5f9; border-radius: 8px; border: 1px solid #cbd5e1; }
-
-/* Buttons */
-.mpc-nav-buttons {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 30px;
-    padding-top: 20px;
-    border-top: 1px solid var(--mpc-border);
-}
-.mpc-btn {
-    padding: 0 25px;
-    border-radius: 8px;
-    font-weight: 700;
-    cursor: pointer;
-    border: none;
-    height: 48px;
-    background: #334155;
-    color: #fff;
-    transition: opacity 0.2s;
-}
-.mpc-btn:hover { opacity: 0.9; }
-.mpc-btn-next { background: var(--mpc-primary); margin-left: auto; }
-.mpc-btn-back { background: #e2e8f0; color: #334155; }
-
 
 /* ======================================================================
-   MOBILE RESPONSIVE STYLES (Strictly Isolated)
-   ====================================================================== */
+3. PLAN TILES GRID - DESKTOP
+====================================================================== */
+.mpc-cat-header {
+margin: 24px 0 12px 0;
+color: var(--mpc-text-main);
+border-bottom: 2px solid var(--mpc-border);
+padding-bottom: 7px;
+font-size: 1.22em;
+font-weight: 700;
+}
+.mpc-grid {
+display: grid;
+grid-template-columns: repeat(3, minmax(0, 1fr));
+gap: 14px;
+margin-bottom: 18px;
+}
+.mpc-tile {
+border: 2px solid var(--mpc-border);
+border-radius: var(--mpc-radius);
+padding: 18px 10px;
+text-align: center;
+cursor: pointer;
+transition: all 0.2s ease;
+background: #ffffff;
+display: flex;
+flex-direction: column;
+justify-content: center;
+align-items: center;
+min-height: 116px;
+}
+.mpc-tile:hover {
+border-color: var(--mpc-primary);
+transform: translateY(-1px);
+}
+.mpc-tile.selected {
+border-color: var(--mpc-primary);
+background: #f4fdf4;
+position: relative;
+box-shadow: 0 4px 14px rgba(55, 146, 55, 0.12);
+}
+.mpc-tile.selected::after {
+content: '✓';
+position: absolute;
+top: -10px;
+right: -10px;
+background: var(--mpc-primary);
+color: #fff;
+width: 26px;
+height: 26px;
+border-radius: 50%;
+display: flex;
+align-items: center;
+justify-content: center;
+font-weight: bold;
+font-size: 0.85em;
+}
+.mpc-tile-title {
+font-size: 1.02em;
+font-weight: 700;
+margin-bottom: 6px;
+line-height: 1.3;
+color: #334155;
+word-wrap: break-word;
+}
+.mpc-tile-price {
+font-size: 1.25em;
+color: var(--mpc-primary);
+font-weight: 800;
+}
+
+/* ======================================================================
+4. COMPACT STEP 2 FORM, EMBEDDED EMAIL PILL (OPTION EM-UI-1),
+SEGMENTED PILL SWITCHERS (LOG-1) & COVERAGE MAP CARD (MAP-1/MAP-2)
+====================================================================== */
+.mpc-step-header-flex {
+display: flex;
+align-items: center;
+justify-content: space-between;
+flex-wrap: wrap;
+gap: 10px;
+margin-bottom: 16px;
+padding-bottom: 10px;
+border-bottom: 1px solid var(--mpc-border);
+}
+.mpc-location-pill {
+display: inline-flex;
+align-items: center;
+gap: 5px;
+background: var(--mpc-accent-light);
+color: var(--mpc-primary-dark);
+border: 1px solid var(--mpc-accent-border);
+padding: 4px 11px;
+border-radius: 999px;
+font-size: 0.8rem;
+font-weight: 800;
+white-space: nowrap;
+}
+
+.mpc-form-row {
+display: flex;
+gap: 14px;
+width: 100%;
+flex-wrap: wrap;
+margin-bottom: 12px;
+align-items: flex-start;
+}
+.mpc-form-col {
+flex: 1;
+min-width: 180px;
+}
+.mpc-form-group > label {
+display: block;
+font-size: 0.84rem;
+font-weight: 700;
+color: #334155;
+margin-bottom: 5px;
+line-height: 1.3;
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
+}
+
+/* Option EM-UI-1: Embedded Action Pill Inside the Right Edge of #mpc_email */
+.mpc-email-input-wrap {
+position: relative !important;
+display: flex !important;
+align-items: center !important;
+width: 100% !important;
+}
+.mpc-email-input-wrap input#mpc_email.is-locked-email {
+padding-right: 98px !important;
+background: #f1f5f9 !important;
+color: #334155 !important;
+cursor: not-allowed !important;
+text-overflow: ellipsis !important;
+}
+.mpc-embedded-email-pill {
+position: absolute !important;
+right: 7px !important;
+top: 50% !important;
+transform: translateY(-50%) !important;
+background: var(--mpc-accent-light) !important;
+color: var(--mpc-primary-dark) !important;
+border: 1px solid #68B946 !important;
+border-radius: 6px !important;
+padding: 4px 10px !important;
+font-size: 0.75rem !important;
+font-weight: 800 !important;
+line-height: 1.2 !important;
+letter-spacing: normal !important;
+white-space: nowrap !important;
+cursor: pointer !important;
+z-index: 5 !important;
+display: inline-flex !important;
+align-items: center !important;
+gap: 4px !important;
+height: auto !important;
+width: auto !important;
+margin: 0 !important;
+box-shadow: 0 1px 2px rgba(27, 94, 32, 0.08) !important;
+transition: all 0.15s ease !important;
+}
+.mpc-embedded-email-pill:hover {
+background: var(--mpc-primary) !important;
+color: #ffffff !important;
+border-color: var(--mpc-primary-dark) !important;
+}
+
+.mpc-form-control {
+width: 100%;
+padding: 11px 13px;
+height: 44px;
+border: 1.5px solid #cbd5e1;
+border-radius: 8px;
+box-sizing: border-box;
+font-size: 0.95rem;
+color: var(--mpc-text-main);
+background: #ffffff;
+transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+textarea.mpc-form-control {
+height: auto;
+}
+.mpc-form-control:focus {
+border-color: var(--mpc-primary);
+outline: none;
+box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.15);
+}
+
+.mpc-email-exists-hint {
+display: none;
+margin-top: 6px;
+padding: 7px 11px;
+background: #fffbeb;
+border: 1px solid #fde68a;
+border-left: 4px solid #f59e0b;
+border-radius: 6px;
+font-size: 0.81rem;
+color: #92400e;
+font-weight: 600;
+line-height: 1.35;
+}
+.mpc-different-email-notice {
+margin-top: 6px;
+padding: 7px 11px;
+background: #f0fdf4;
+border: 1px solid #bbf7d0;
+border-left: 4px solid var(--mpc-primary);
+border-radius: 6px;
+font-size: 0.81rem;
+color: var(--mpc-primary-dark);
+font-weight: 600;
+line-height: 1.35;
+}
+
+/* Logistics Card & Touch-Friendly 2-Button Segmented Pill Switchers (Option LOG-1) */
+.mpc-logistics-card-group {
+background: #f8fafc;
+border: 1.5px solid #e2e8f0;
+border-radius: 12px;
+padding: 14px 16px;
+margin-top: 6px;
+}
+.mpc-segmented-control {
+display: grid !important;
+grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+gap: 6px !important;
+background: #e2e8f0 !important;
+padding: 4px !important;
+border-radius: 10px !important;
+width: 100% !important;
+}
+.mpc-seg-pill {
+background: transparent !important;
+color: #475569 !important;
+border: 1px solid transparent !important;
+border-radius: 7px !important;
+padding: 9px 8px !important;
+font-size: 0.85rem !important;
+font-weight: 800 !important;
+line-height: 1.2 !important;
+cursor: pointer !important;
+display: inline-flex !important;
+align-items: center !important;
+justify-content: center !important;
+gap: 5px !important;
+text-align: center !important;
+white-space: nowrap !important;
+transition: all 0.18s ease !important;
+height: auto !important;
+width: 100% !important;
+margin: 0 !important;
+box-shadow: none !important;
+}
+.mpc-seg-pill:hover {
+color: var(--mpc-primary-dark) !important;
+}
+.mpc-seg-pill.is-active {
+background: #ffffff !important;
+color: var(--mpc-primary-dark) !important;
+border-color: #68B946 !important;
+box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+}
+.mpc-hidden-native-select {
+display: none !important;
+}
+
+/* Non-Clipped Delivery Zone Confirmation Card & Visible Coverage Map Button (Option MAP-1 / MAP-2) */
+.mpc-zone-confirm-card {
+background: #ffffff !important;
+border: 1.5px solid #cbd5e1 !important;
+border-left: 4px solid var(--mpc-primary) !important;
+border-radius: 10px !important;
+padding: 11px 14px !important;
+margin-top: 12px !important;
+display: flex !important;
+align-items: center !important;
+justify-content: space-between !important;
+flex-wrap: wrap !important;
+gap: 10px 14px !important;
+width: 100% !important;
+box-sizing: border-box !important;
+}
+.mpc-zone-confirm-card label.mpc-zone-check-label {
+display: inline-flex !important;
+align-items: center !important;
+gap: 10px !important;
+cursor: pointer !important;
+font-size: 0.88rem !important;
+font-weight: 700 !important;
+color: var(--mpc-text-main) !important;
+line-height: 1.35 !important;
+white-space: normal !important;
+overflow: visible !important;
+text-overflow: clip !important;
+margin: 0 !important;
+flex: 1 1 210px !important;
+}
+.mpc-zone-confirm-card label.mpc-zone-check-label input[type="checkbox"] {
+width: 19px !important;
+height: 19px !important;
+min-width: 19px !important;
+margin: 0 !important;
+accent-color: var(--mpc-primary) !important;
+cursor: pointer !important;
+flex-shrink: 0 !important;
+}
+.mpc-view-map-pill {
+display: inline-flex !important;
+align-items: center !important;
+justify-content: center !important;
+gap: 6px !important;
+background: var(--mpc-accent-light) !important;
+color: var(--mpc-primary-dark) !important;
+border: 1.5px solid #68B946 !important;
+border-radius: 8px !important;
+padding: 7px 13px !important;
+font-size: 0.81rem !important;
+font-weight: 800 !important;
+line-height: 1.2 !important;
+text-decoration: none !important;
+white-space: nowrap !important;
+cursor: pointer !important;
+flex-shrink: 0 !important;
+height: auto !important;
+width: auto !important;
+margin: 0 !important;
+transition: all 0.18s ease !important;
+box-shadow: 0 2px 5px rgba(27, 94, 32, 0.08) !important;
+}
+.mpc-view-map-pill:hover {
+background: var(--mpc-primary) !important;
+color: #ffffff !important;
+border-color: var(--mpc-primary-dark) !important;
+transform: translateY(-1px);
+}
+
+/* ======================================================================
+5. PLAN SUMMARY COUPON BOX, MOBILE SUMMARY BAR & NEXT STEP BUTTON
+====================================================================== */
+.mpc-mobile-summary-bar {
+display: none;
+align-items: center;
+justify-content: space-between;
+gap: 10px;
+width: 100%;
+cursor: pointer;
+user-select: none;
+}
+.mpc-mob-sum-left {
+display: flex;
+flex-direction: column;
+gap: 2px;
+min-width: 0;
+flex: 1;
+}
+.mpc-mob-sum-plan {
+font-size: 0.88rem;
+font-weight: 800;
+color: var(--mpc-primary-dark);
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
+}
+.mpc-mob-sum-total {
+font-size: 0.82rem;
+font-weight: 700;
+color: var(--mpc-text-main);
+}
+.mpc-mob-sum-toggle-pill {
+background: var(--mpc-accent-light);
+color: var(--mpc-primary-dark);
+border: 1px solid #68B946;
+border-radius: 999px;
+padding: 5px 11px;
+font-size: 0.75rem;
+font-weight: 800;
+white-space: nowrap;
+flex-shrink: 0;
+display: inline-flex;
+align-items: center;
+gap: 4px;
+}
+
+.mpc-summary-coupon-box {
+margin-top: 14px;
+padding-top: 14px;
+border-top: 1px dashed #cbd5e1;
+}
+.mpc-summary-coupon-label {
+display: block;
+font-size: 0.82rem;
+font-weight: 800;
+color: #334155;
+margin-bottom: 6px;
+}
+.mpc-summary-coupon-row {
+display: flex;
+gap: 8px;
+align-items: center;
+}
+.mpc-summary-coupon-row .mpc-form-control {
+flex: 1;
+height: 40px;
+padding: 6px 11px;
+font-size: 0.88rem;
+letter-spacing: 0.5px !important;
+font-weight: 700;
+}
+.mpc-summary-apply-btn {
+height: 40px !important;
+padding: 0 16px !important;
+font-size: 0.85rem !important;
+font-weight: 800 !important;
+background: #334155 !important;
+color: #ffffff !important;
+border-radius: 8px !important;
+white-space: nowrap !important;
+width: auto !important;
+margin: 0 !important;
+flex-shrink: 0 !important;
+}
+.mpc-summary-apply-btn:hover {
+background: var(--mpc-primary-dark) !important;
+}
+
+.mpc-summary-next-btn {
+width: 100% !important;
+margin-top: 16px !important;
+margin-bottom: 0 !important;
+height: 46px !important;
+background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important;
+color: #ffffff !important;
+border-radius: 10px !important;
+font-size: 0.96rem !important;
+font-weight: 800 !important;
+box-shadow: 0 6px 16px rgba(55, 146, 55, 0.25) !important;
+display: block;
+}
+
+/* ======================================================================
+6. IN-PAGE ZOOMABLE COVERAGE MAP LIGHTBOX MODAL
+====================================================================== */
+.mpc-map-modal-backdrop {
+display: none;
+position: fixed;
+inset: 0;
+background: rgba(15, 23, 42, 0.72);
+backdrop-filter: blur(5px);
+-webkit-backdrop-filter: blur(5px);
+z-index: 100090;
+align-items: center;
+justify-content: center;
+padding: 14px;
+}
+.mpc-map-modal-backdrop.is-open {
+display: flex !important;
+}
+.mpc-map-modal-dialog {
+background: #ffffff;
+border: 2px solid var(--mpc-accent-border);
+border-top: 5px solid var(--mpc-primary);
+border-radius: 16px;
+max-width: 780px;
+width: 100%;
+max-height: 90vh;
+display: flex;
+flex-direction: column;
+overflow: hidden;
+box-shadow: 0 24px 48px rgba(15, 23, 42, 0.35);
+}
+.mpc-map-modal-header {
+padding: 14px 18px;
+background: #f8fafc;
+border-bottom: 1px solid #e2e8f0;
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 10px;
+}
+.mpc-map-modal-header h4 {
+margin: 0;
+font-size: 1.05rem;
+font-weight: 800;
+color: var(--mpc-primary-dark);
+}
+.mpc-map-modal-close-x {
+background: #e2e8f0 !important;
+color: #334155 !important;
+border: none !important;
+border-radius: 50% !important;
+width: 32px !important;
+height: 32px !important;
+font-size: 1.2rem !important;
+font-weight: 800 !important;
+line-height: 1 !important;
+cursor: pointer !important;
+display: inline-flex !important;
+align-items: center !important;
+justify-content: center !important;
+padding: 0 !important;
+margin: 0 !important;
+}
+.mpc-map-modal-body {
+padding: 12px;
+overflow: auto;
+text-align: center;
+background: #f1f5f9;
+flex: 1;
+-webkit-overflow-scrolling: touch;
+}
+.mpc-map-modal-body img {
+max-width: 100%;
+height: auto;
+border-radius: 8px;
+display: block;
+margin: 0 auto;
+}
+.mpc-map-modal-footer {
+padding: 12px 18px;
+background: #ffffff;
+border-top: 1px solid #e2e8f0;
+display: flex;
+align-items: center;
+justify-content: space-between;
+flex-wrap: wrap;
+gap: 10px;
+}
+.mpc-map-confirm-close-btn {
+background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important;
+color: #ffffff !important;
+border: none !important;
+border-radius: 8px !important;
+padding: 10px 18px !important;
+font-size: 0.88rem !important;
+font-weight: 800 !important;
+cursor: pointer !important;
+height: auto !important;
+width: auto !important;
+margin: 0 !important;
+}
+
+/* ======================================================================
+7. NAVIGATION BUTTONS
+====================================================================== */
+.mpc-nav-buttons {
+display: flex;
+justify-content: space-between;
+margin-top: 22px;
+padding-top: 16px;
+border-top: 1px solid var(--mpc-border);
+gap: 12px;
+}
+.mpc-btn {
+padding: 0 24px;
+border-radius: 8px;
+font-weight: 700;
+cursor: pointer;
+border: none;
+height: 46px;
+background: #334155;
+color: #fff;
+transition: all 0.2s ease;
+font-size: 0.95rem;
+}
+.mpc-btn:hover:not(:disabled) {
+opacity: 0.94;
+transform: translateY(-1px);
+}
+.mpc-btn:disabled {
+opacity: 0.55;
+cursor: not-allowed;
+}
+.mpc-btn-next {
+background: var(--mpc-primary);
+margin-left: auto;
+}
+.mpc-btn-back {
+background: #e2e8f0;
+color: #334155;
+}
+
+/* ======================================================================
+8. TABLET & MOBILE RESPONSIVE STYLES
+====================================================================== */
 @media (max-width: 992px) {
-    .mpc-checkout-container { flex-direction: column-reverse; align-items: stretch; gap: 30px; }
-    .mpc-summary-area { width: 100%; flex: none; position: relative; top: 0; }
+.mpc-checkout-container {
+flex-direction: column-reverse;
+align-items: stretch;
+gap: 20px;
+padding: 0 10px;
+}
+.mpc-summary-area {
+width: 100%;
+flex: none;
+position: relative;
+top: 0;
+padding: 18px;
+}
+.mpc-summary-area.is-mobile-collapsible-step {
+padding: 12px 16px !important;
+}
+.mpc-summary-area.is-mobile-collapsible-step .mpc-mobile-summary-bar {
+display: flex !important;
+}
+.mpc-summary-area.is-mobile-collapsible-step:not(.is-mobile-expanded) .mpc-summary-full-body {
+display: none !important;
+}
+.mpc-summary-area.is-mobile-collapsible-step.is-mobile-expanded .mpc-summary-full-body {
+display: block !important;
+margin-top: 12px !important;
+padding-top: 12px !important;
+border-top: 1px solid var(--mpc-accent-border) !important;
+}
 }
 
 @media (max-width: 768px) {
-    .mpc-checkout-container { padding: 0 0px; margin: 15px auto; }
-    .mpc-wizard-area { padding: 20px 15px; }
-    .mpc-step-indicator span { display: none; }
-    .mpc-form-row { flex-direction: column; gap: 0; }
-    
-    /* Mobile Grid Force */
-    .mpc-grid {
-        display: grid !important;
-        grid-template-columns: repeat(3, minmax(0, 1fr)) !important; 
-        gap: 6px !important; 
-        width: 100% !important;
-    }
-    
-    /* Mobile Tile Shrink */
-    .mpc-tile {
-        padding: 12px 4px !important; 
-        min-height: 100px !important;
-        width: auto !important;
-    }
-    .mpc-tile-title {
-        font-size: 0.72em !important; 
-        margin-bottom: 5px !important;
-        line-height: 1.1 !important;
-    }
-    .mpc-tile-price {
-        font-size: 0.9em !important; 
-    }
-    .mpc-tile.selected::after { 
-        width: 18px !important; height: 18px !important; font-size: 10px !important; top: -6px !important; right: -6px !important; 
-    }
-    .mpc-tile-desc { display: none !important; }
-    
-    .mpc-btn { width: 100%; margin-bottom: 10px; }
-    .mpc-nav-buttons { flex-direction: column-reverse; }
-    .mpc-btn-next { margin-left: 0; margin-bottom: 15px; }
+.mpc-checkout-container {
+padding: 0 6px;
+margin: 12px auto 30px auto;
+gap: 16px;
+}
+.mpc-wizard-area {
+padding: 16px 14px;
+}
+.mpc-progress {
+margin-bottom: 20px;
+}
+.mpc-step-indicator span {
+display: none;
+}
+
+/* Compact Mobile Top Account Bar & Sign-In Drawer */
+.mpc-top-account-bar {
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border-radius: 10px;
+}
+.mpc-top-account-bar.is-logged-in {
+    padding: 10px 12px;
+}
+.mpc-account-bar-header {
+    flex-wrap: nowrap;
+    gap: 8px;
+}
+.mpc-account-bar-title {
+    font-size: 0.85rem;
+    gap: 2px 6px;
+}
+.mpc-account-bar-sub {
+    font-size: 0.76rem;
+    display: block;
+    width: 100%;
+}
+.mpc-account-toggle-btn {
+    padding: 6px 12px !important;
+    font-size: 0.8rem !important;
+    width: auto !important;
+    margin-bottom: 0 !important;
+    height: 34px !important;
+}
+.mpc-welcome-name {
+    font-size: 0.88rem;
+}
+.mpc-deposit-waived-pill {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+}
+.mpc-logged-bar-row-2 {
+    margin-top: 6px;
+    padding-top: 6px;
+    gap: 6px;
+}
+.mpc-autofill-check-label {
+    font-size: 0.78rem !important;
+    gap: 6px !important;
+}
+
+.mpc-inline-auth-grid,
+.mpc-inline-forgot-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+.mpc-auth-submit-btn,
+.mpc-auth-reset-btn {
+    width: 100% !important;
+    margin-bottom: 0 !important;
+    height: 40px !important;
+}
+
+/* Step 1 Customer Type Tabs on Mobile */
+.mpc-l3-mode-tabs {
+    gap: 6px;
+    padding: 4px;
+    margin-bottom: 14px;
+}
+.mpc-l3-tab-btn {
+    padding: 8px 6px !important;
+    font-size: 0.78rem !important;
+}
+.mpc-l3-returning-panel {
+    padding: 14px;
+}
+
+/* Mobile Plan Tiles 3-Column Grid */
+.mpc-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    width: 100% !important;
+}
+.mpc-tile {
+    padding: 12px 4px !important;
+    min-height: 98px !important;
+    width: auto !important;
+}
+.mpc-tile-title {
+    font-size: 0.72em !important;
+    margin-bottom: 5px !important;
+    line-height: 1.15 !important;
+}
+.mpc-tile-price {
+    font-size: 0.9em !important;
+}
+.mpc-tile.selected::after {
+    width: 18px !important;
+    height: 18px !important;
+    font-size: 10px !important;
+    top: -6px !important;
+    right: -6px !important;
+}
+.mpc-tile-desc {
+    display: none !important;
+}
+
+/* Compact Step 2 Delivery Information Layout on Mobile */
+.mpc-step-header-flex {
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+}
+.mpc-step-header-flex h2 {
+    font-size: 1.25rem !important;
+}
+.mpc-location-pill {
+    font-size: 0.74rem;
+    padding: 3px 9px;
+}
+
+.mpc-form-row {
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.mpc-form-col {
+    min-width: 0;
+    width: 100%;
+}
+
+/* Keep First Name + Last Name Side-by-Side on Mobile */
+.mpc-form-row.mpc-two-col-mobile {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+}
+.mpc-form-row.mpc-two-col-mobile .mpc-form-col {
+    min-width: 0 !important;
+}
+
+.mpc-form-group > label {
+    font-size: 0.78rem;
+    margin-bottom: 3px;
+}
+.mpc-form-control {
+    padding: 8px 10px;
+    font-size: 15px; /* Prevents iOS zoom while staying compact */
+    height: 40px;
+}
+textarea.mpc-form-control {
+    height: auto;
+}
+
+/* Embedded Email Pill on Mobile */
+.mpc-email-input-wrap input#mpc_email.is-locked-email {
+    padding-right: 88px !important;
+}
+.mpc-embedded-email-pill {
+    right: 6px !important;
+    padding: 3px 8px !important;
+    font-size: 0.72rem !important;
+}
+
+/* Logistics Card, Segmented Pills & Delivery Zone Card on Mobile */
+.mpc-logistics-card-group {
+    padding: 11px 12px;
+    margin-top: 4px;
+}
+.mpc-logistics-switch-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+}
+.mpc-seg-pill {
+    padding: 9px 10px !important;
+    font-size: 0.83rem !important;
+}
+.mpc-zone-confirm-card {
+    padding: 10px 12px !important;
+    gap: 8px 10px !important;
+}
+.mpc-zone-confirm-card label.mpc-zone-check-label {
+    font-size: 0.82rem !important;
+    flex: 1 1 100% !important;
+}
+.mpc-view-map-pill {
+    width: 100% !important;
+    justify-content: center !important;
+    padding: 8px 12px !important;
+}
+.mpc-map-confirm-close-btn {
+    width: 100% !important;
+    text-align: center !important;
+}
+
+/* Summary Card Promo Code & Step 1 Next Button on Mobile */
+.mpc-summary-coupon-row .mpc-form-control {
+    height: 38px !important;
+}
+.mpc-summary-apply-btn {
+    width: auto !important;
+    height: 38px !important;
+    margin-bottom: 0 !important;
+    padding: 0 14px !important;
+}
+.mpc-summary-next-btn {
+    width: 100% !important;
+    height: 44px !important;
+    margin-top: 14px !important;
+    margin-bottom: 0 !important;
+}
+
+/* Bottom Step Navigation Buttons */
+.mpc-nav-buttons {
+    flex-direction: column-reverse;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 14px;
+}
+.mpc-nav-buttons .mpc-btn {
+    width: 100%;
+    margin: 0;
+    height: 44px;
+}
+
+
 }
